@@ -1,0 +1,95 @@
+# Git and version control
+.git
+.gitignore
+*.md
+!README.md
+
+# Python cache and virtual environments
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+tea_env/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Output directories (will be created in container)
+output/
+*.mp4
+*.srt
+*.wav
+
+# Image files (except those needed for the app)
+thumbnails/
+*.png
+*.jpg
+*.jpeg
+
+# Log files
+*.log
+gradio_app.log
+
+# Cache directories
+.cache/
+.pytest_cache/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+Miniconda3-*.sh
+
+# Documentation that's not needed in container
+docs/
+
+# Test files
+test_*.py
+
+# Models will be downloaded in container, so exclude local ones
+# But keep the directory structure
+models/*.onnx
+models/*.bin
+```

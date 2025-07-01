@@ -1,0 +1,37 @@
+{
+  "allowed_models": [
+    "gemini/gemini-1.5-pro-002",
+    "gemini/gemini-1.5-flash-002",
+    "github/gpt-4.1",
+    "gemini/gemini-2.5-flash-preview-04-17",
+    "gemini/gemini-2.0-flash-001",
+    "gemini/gemini-2.5-pro-preview-03-25",
+    "vertex_ai/gemini-1.5-flash-002",
+    "vertex_ai/gemini-1.5-pro-002",
+    "vertex_ai/gemini-2.0-flash-001",
+    "openai/o3-mini",
+    "gpt-4o",
+    "azure/gpt-4o",
+    "azure/gpt-4o-mini",
+    "bedrock/anthropic.claude-3-5-sonnet-20240620-v1:0",
+    "bedrock/anthropic.claude-3-5-sonnet-20241022-v2:0",
+    "bedrock/anthropic.claude-3-5-haiku-20241022-v1:0",
+    "bedrock/us.anthropic.claude-3-7-sonnet-20250219-v1:0",
+    "openrouter/openai/gpt-4o",
+    "openrouter/openai/gpt-4o-mini",
+    "openrouter/openai/gpt-3.5-turbo",
+    "openrouter/anthropic/claude-3.5-sonnet",
+    "openrouter/anthropic/claude-3-haiku",
+    "openrouter/google/gemini-pro-1.5",
+    "openrouter/deepseek/deepseek-chat",
+    "openrouter/qwen/qwen-2.5-72b-instruct",
+    "openrouter/meta-llama/llama-3.1-8b-instruct:free",
+    "openrouter/microsoft/phi-3-mini-128k-instruct:free"
+  ],
+  "embedding_models": [
+    "text-embedding-ada-002",
+    "vertex_ai/text-embedding-005",
+    "azure/text-embedding-3-large",
+    "gemini/gemini-embedding-exp-03-07"
+  ]
+}

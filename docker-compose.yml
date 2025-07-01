@@ -1,0 +1,80 @@
+version: '3.8'
+
+services:
+  theoremexplain:
+    build:
+      context: .
+      dockerfile: dockerfile
+    container_name: theoremexplain-agent
+    ports:
+      - "7860:7860"
+    volumes:
+      # Mount output directory to persist generated videos
+      - ./output:/app/output
+      # Mount models directory if you want to use local models
+      - ./models:/app/models
+      # Mount data directory for RAG and datasets
+      - ./data:/app/data
+    environment:
+      # Copy environment variables from host .env file
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - AZURE_API_KEY=${AZURE_API_KEY}
+      - AZURE_API_BASE=${AZURE_API_BASE}
+      - AZURE_API_VERSION=${AZURE_API_VERSION}
+      - VERTEXAI_PROJECT=${VERTEXAI_PROJECT}
+      - VERTEXAI_LOCATION=${VERTEXAI_LOCATION}
+      - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      # Kokoro TTS settings
+      - KOKORO_MODEL_PATH=models/kokoro-v0_19.onnx
+      - KOKORO_VOICES_PATH=models/voices.bin
+      - KOKORO_DEFAULT_VOICE=af
+      - KOKORO_DEFAULT_SPEED=1.0
+      - KOKORO_DEFAULT_LANG=en-us
+      # Python path
+      - PYTHONPATH=/app:$PYTHONPATH
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "conda", "run", "-n", "tea", "python", "-c", "import src; import manim; print('Health check passed')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # Optional: Add a service for running batch generation
+  theoremexplain-batch:
+    build:
+      context: .
+      dockerfile: dockerfile
+    container_name: theoremexplain-batch
+    profiles:
+      - batch
+    volumes:
+      - ./output:/app/output
+      - ./models:/app/models
+      - ./data:/app/data
+    environment:
+      # Same environment variables as main service
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - AZURE_API_KEY=${AZURE_API_KEY}
+      - AZURE_API_BASE=${AZURE_API_BASE}
+      - AZURE_API_VERSION=${AZURE_API_VERSION}
+      - VERTEXAI_PROJECT=${VERTEXAI_PROJECT}
+      - VERTEXAI_LOCATION=${VERTEXAI_LOCATION}
+      - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - KOKORO_MODEL_PATH=models/kokoro-v0_19.onnx
+      - KOKORO_VOICES_PATH=models/voices.bin
+      - KOKORO_DEFAULT_VOICE=af
+      - KOKORO_DEFAULT_SPEED=1.0
+      - KOKORO_DEFAULT_LANG=en-us
+      - PYTHONPATH=/app:$PYTHONPATH
+    command: >
+      conda run --no-capture-output -n tea python generate_video.py
+      --model "openai/gpt-4o-mini"
+      --helper_model "openai/gpt-4o-mini"
+      --output_dir "output/batch_generation"
+      --theorems_path "data/thb_easy/math.json"
+      --max_scene_concurrency 3
+      --max_topic_concurrency 5
+    restart: no
