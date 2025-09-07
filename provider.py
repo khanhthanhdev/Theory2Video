@@ -6,39 +6,20 @@ Allows user to select provider, enter API key, and select model.
 
 import os
 from typing import Dict, List, Optional
+from src.utils.model_registry import get_providers_config
 
 class ProviderManager:
     def __init__(self):
-        # Example provider configs; extend as needed
-        self.providers = {
-            'OpenAI': {
-                'api_key_env': 'OPENAI_API_KEY',
-                'models': [
-                    'gpt-4.1', 'gpt-4o', 'gpt-3.5-turbo'
-                ]
-            },
-            'Google Gemini': {
-                'api_key_env': 'GOOGLE_API_KEY',
-                'models': [
-                    'gemini-1.5-pro-002', 'gemini-2.5-flash-preview-04-17'
-                ]
-            },
-            'Anthropic': {
-                'api_key_env': 'ANTHROPIC_API_KEY',
-                'models': [
-                    'claude-3-5-sonnet-20241022', 'claude-3-haiku'
-                ]
-            },
-            'OpenRouter': {
-                'api_key_env': 'OPENROUTER_API_KEY',
-                'models': [
-                    'openai/gpt-4o', 'openai/gpt-4o-mini', 'anthropic/claude-3.5-sonnet',
-                    'anthropic/claude-3-haiku', 'google/gemini-pro-1.5', 'deepseek/deepseek-chat',
-                    'qwen/qwen-2.5-72b-instruct', 'meta-llama/llama-3.1-8b-instruct:free',
-                    'microsoft/phi-3-mini-128k-instruct:free'
-                ]
+        # Load from central registry
+        providers_cfg = get_providers_config()
+        # Normalize to human-readable keys matching legacy UI labels
+        self.providers = {}
+        for key, cfg in providers_cfg.items():
+            display = cfg.get('display_name', key.title())
+            self.providers[display] = {
+                'api_key_env': cfg.get('api_key_env', ''),
+                'models': cfg.get('models', [])
             }
-        }
         self.selected_provider = None
         self.api_keys = {}
 

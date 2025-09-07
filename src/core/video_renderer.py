@@ -368,8 +368,8 @@ class OptimizedVideoRenderer:
                                 scene_trace_id: str, topic: str, session_id: str) -> str:
         """Process visual fix code with optimization."""
         
-        # For Gemini/Vertex AI models, pass the video directly
-        if hasattr(self, 'scene_model') and self.scene_model.model_name.startswith(('gemini/', 'vertex_ai/')):
+        # For Gemini models, pass the video directly
+        if hasattr(self, 'scene_model') and self.scene_model.model_name.startswith(('gemini/',)):
             media_input = video_path
         else:
             # For other models, create optimized snapshot

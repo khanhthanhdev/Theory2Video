@@ -10,7 +10,6 @@ from PIL import Image
 from src.utils.utils import extract_json
 from mllm_tools.utils import _prepare_text_inputs, _extract_code, _prepare_text_image_inputs
 from mllm_tools.gemini import GeminiWrapper
-from mllm_tools.vertex_ai import VertexAIWrapper
 from task_generator import (
     get_prompt_code_generation,
     get_prompt_fix_error,
@@ -32,8 +31,9 @@ from src.rag.vector_store import RAGVectorStore
 DEFAULT_MAX_RETRIES = 10
 DEFAULT_RAG_K_VALUE = 2
 CACHE_FILE_ENCODING = 'utf-8'
-CODE_PATTERN = r"```python(.*)```"
-JSON_PATTERN = r'```json(.*)```'
+# Make patterns non-greedy and tolerant of whitespace to avoid over-capturing
+CODE_PATTERN = r"```python\s*(.*?)\s*```"
+JSON_PATTERN = r'```json\s*(.*?)\s*```'
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -681,7 +681,7 @@ class CodeGenerator:
             prompt = prompt_template.format(code=code)
             
             # Prepare input based on media type and model capabilities
-            if is_video and isinstance(self.scene_model, (GeminiWrapper, VertexAIWrapper)):
+            if is_video and getattr(self.scene_model, 'model_name', '').startswith('gemini/'):
                 # For video with Gemini models
                 messages = [
                     {"type": "text", "content": prompt},
@@ -787,7 +787,7 @@ class CodeGenerator:
             )
             
             # Prepare input based on media type and model capabilities
-            if is_video and isinstance(self.scene_model, (GeminiWrapper, VertexAIWrapper)):
+            if is_video and getattr(self.scene_model, 'model_name', '').startswith('gemini/'):
                 # For video with Gemini/Vertex AI models
                 messages = [
                     {"type": "text", "content": prompt},
@@ -968,7 +968,7 @@ class CodeGenerator:
             # Determine media type and prepare input
             is_video = isinstance(media_path, str) and media_path.lower().endswith('.mp4')
             
-            if is_video and isinstance(self.scene_model, (GeminiWrapper, VertexAIWrapper)):
+            if is_video and getattr(self.scene_model, 'model_name', '').startswith('gemini/'):
                 messages = [
                     {"type": "text", "content": analysis_prompt},
                     {"type": "video", "content": str(media_path)}

@@ -1,36 +1,56 @@
 {
   "allowed_models": [
-    "gemini/gemini-1.5-pro-002",
-    "gemini/gemini-1.5-flash-002",
-    "github/gpt-4.1",
-    "gemini/gemini-2.5-flash-preview-04-17",
-    "gemini/gemini-2.0-flash-001",
-    "gemini/gemini-2.5-pro-preview-03-25",
-    "vertex_ai/gemini-1.5-flash-002",
-    "vertex_ai/gemini-1.5-pro-002",
-    "vertex_ai/gemini-2.0-flash-001",
+    "openai/gpt-4o",
+    "openai/o3",
     "openai/o3-mini",
-    "gpt-4o",
-    "azure/gpt-4o",
-    "azure/gpt-4o-mini",
-    "bedrock/anthropic.claude-3-5-sonnet-20240620-v1:0",
+    "gemini/gemini-2.5-pro",
+    "gemini/gemini-2.5-flash",
     "bedrock/anthropic.claude-3-5-sonnet-20241022-v2:0",
     "bedrock/anthropic.claude-3-5-haiku-20241022-v1:0",
-    "bedrock/us.anthropic.claude-3-7-sonnet-20250219-v1:0",
-    "openrouter/openai/gpt-4o",
-    "openrouter/openai/gpt-4o-mini",
-    "openrouter/openai/gpt-3.5-turbo",
-    "openrouter/anthropic/claude-3.5-sonnet",
-    "openrouter/anthropic/claude-3-haiku",
-    "openrouter/google/gemini-pro-1.5",
-    "openrouter/deepseek/deepseek-chat",
-    "openrouter/qwen/qwen-2.5-72b-instruct",
-    "openrouter/meta-llama/llama-3.1-8b-instruct:free",
-    "openrouter/microsoft/phi-3-mini-128k-instruct:free"
+    "bedrock/anthropic.claude-3-7-sonnet-20250219-v1:0",
+    "bedrock/anthropic.claude-sonnet-4-20250514-v1:0",
+    "bedrock/amazon.nova-lite-v1:0",
+    "bedrock/amazon.nova-pro-v1:0"
   ],
+  "default_model": "gemini/gemini-2.5-pro",
+  "providers": {
+    "openai": {
+      "display_name": "OpenAI",
+      "api_key_env": "OPENAI_API_KEY",
+      "models": ["openai/gpt-4o", "openai/o3", "openai/o3-mini"],
+      "description": "Advanced AI models from OpenAI"
+    },
+    "gemini": {
+      "display_name": "Google Gemini",
+      "api_key_env": "GEMINI_API_KEY",
+      "models": ["gemini/gemini-2.5-pro", "gemini/gemini-2.5-flash"],
+      "description": "Google's powerful Gemini models"
+    },
+    "bedrock": {
+      "display_name": "Amazon Bedrock",
+      "api_key_env": "AWS_BEARER_TOKEN_BEDROCK",
+      "models": [
+        "bedrock/anthropic.claude-3-5-sonnet-20241022-v2:0",
+        "bedrock/anthropic.claude-3-5-haiku-20241022-v1:0",
+        "bedrock/anthropic.claude-3-7-sonnet-20250219-v1:0",
+        "bedrock/anthropic.claude-sonnet-4-20250514-v1:0",
+        "bedrock/amazon.nova-lite-v1:0",
+        "bedrock/amazon.nova-pro-v1:0"
+      ],
+      "description": "AWS Bedrock hosted models"
+    }
+  },
+  "model_descriptions": {
+    "openai/gpt-4o": "Reliable, multimodal, strong reasoning",
+    "openai/o3": "Reasoning-optimized model",
+    "openai/o3-mini": "Faster, cheaper reasoning variant",
+    "gemini/gemini-2.5-pro": "High quality, complex tasks",
+    "gemini/gemini-2.5-flash": "Fast, good for prototyping",
+    "bedrock/anthropic.claude-3-5-sonnet-20241022-v2:0": "Claude Sonnet on Bedrock",
+    "bedrock/amazon.nova-lite-v1:0": "Amazon Nova Lite on Bedrock"
+  },
   "embedding_models": [
     "text-embedding-ada-002",
-    "vertex_ai/text-embedding-005",
     "azure/text-embedding-3-large",
     "gemini/gemini-embedding-exp-03-07"
   ]

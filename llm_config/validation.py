@@ -26,24 +26,6 @@ class ProviderValidator(IProviderValidator):
                 'url': 'https://generativelanguage.googleapis.com/v1beta/models',
                 'headers_fn': lambda key: {},
                 'params_fn': lambda key: {'key': key}
-            },
-            'Anthropic': {
-                'url': 'https://api.anthropic.com/v1/messages',
-                'headers_fn': lambda key: {
-                    'x-api-key': key,
-                    'anthropic-version': '2023-06-01',
-                    'content-type': 'application/json'
-                },
-                'method': 'POST',
-                'data': {
-                    'model': 'claude-3-haiku-20240307',
-                    'max_tokens': 1,
-                    'messages': [{'role': 'user', 'content': 'test'}]
-                }
-            },
-            'OpenRouter': {
-                'url': 'https://openrouter.ai/api/v1/models',
-                'headers_fn': lambda key: {'Authorization': f'Bearer {key}'}
             }
         }
         

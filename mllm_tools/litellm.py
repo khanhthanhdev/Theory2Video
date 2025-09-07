@@ -27,7 +27,7 @@ class LiteLLMWrapper:
         Initialize the LiteLLM wrapper
         
         Args:
-            model_name: Name of the model to use (e.g. "azure/gpt-4", "vertex_ai/gemini-pro")
+            model_name: Name of the model to use (e.g. "openai/gpt-4o", "gemini/gemini-2.5-pro")
             temperature: Temperature for completion
             print_cost: Whether to print the cost of the completion
             verbose: Whether to print verbose output
@@ -130,7 +130,7 @@ class LiteLLMWrapper:
                             }
                         ]
                     })
-                elif "gpt" in self.model_name:
+                elif "gpt" in self.model_name or "bedrock" in self.model_name:
                     # GPT and other models expect a different format
                     if msg["type"] == "image":
                         # Default format for images and videos in GPT
@@ -147,9 +147,9 @@ class LiteLLMWrapper:
                             ]
                         })
                     else:
-                        raise ValueError("For GPT, only text and image inferencing are supported")
+                        raise ValueError("For text generation, only text and image inputs are supported")
                 else:
-                    raise ValueError("Only support Gemini and Gpt for Multimodal capability now")
+                    raise ValueError("This model does not support multimodal inputs in current configuration")
 
         try:
             # if it's openai o series model, set temperature to None and reasoning_effort to "medium"

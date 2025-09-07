@@ -89,7 +89,8 @@ class ConfigurationManager(IConfigurationManager):
             api_key='',
             temperature=0.7,
             max_retries=3,
-            helper_model='gemini/gemini-2.5-flash-preview-04-17',
+            # Use a stable helper model or leave None so it mirrors planner
+            helper_model=None,
             use_rag=True,
             use_visual_fix_code=False,
             use_context_learning=True,

@@ -7,6 +7,7 @@ import os
 import logging
 from typing import Dict, List, Optional
 from .interfaces import IProviderManager
+from src.utils.model_registry import get_providers_config, get_model_descriptions
 
 logger = logging.getLogger(__name__)
 
@@ -15,70 +16,19 @@ class EnhancedProviderManager(IProviderManager):
     """Enhanced provider manager with better organization and extensibility."""
     
     def __init__(self):
-        self.providers_config = {
-            'OpenAI': {
-                'api_key_env': 'OPENAI_API_KEY',
-                'models': [
-                    'openai/gpt-4',
-                    'openai/gpt-4o',
-                    'openai/gpt-3.5-turbo'
-                ],
-                'display_name': 'OpenAI',
-                'description': 'Advanced AI models from OpenAI'
-            },
-            'Google Gemini': {
-                'api_key_env': 'GOOGLE_API_KEY',
-                'models': [
-                    'gemini/gemini-1.5-pro-002',
-                    'gemini/gemini-2.5-flash-preview-04-17'
-                ],
-                'display_name': 'Google Gemini',
-                'description': 'Google\'s powerful Gemini models'
-            },
-            'Anthropic': {
-                'api_key_env': 'ANTHROPIC_API_KEY',
-                'models': [
-                    'anthropic/claude-3-5-sonnet-20241022',
-                    'anthropic/claude-3-haiku'
-                ],
-                'display_name': 'Anthropic Claude',
-                'description': 'Anthropic\'s Claude family of models'
-            },
-            'OpenRouter': {
-                'api_key_env': 'OPENROUTER_API_KEY',
-                'models': [
-                    'openrouter/openai/gpt-4o',
-                    'openrouter/openai/gpt-4o-mini',
-                    'openrouter/anthropic/claude-3.5-sonnet',
-                    'openrouter/anthropic/claude-3-haiku',
-                    'openrouter/google/gemini-pro-1.5',
-                    'openrouter/deepseek/deepseek-chat',
-                    'openrouter/qwen/qwen-2.5-72b-instruct',
-                    'openrouter/meta-llama/llama-3.1-8b-instruct:free',
-                    'openrouter/microsoft/phi-3-mini-128k-instruct:free'
-                ],
-                'display_name': 'OpenRouter',
-                'description': 'Access multiple models through OpenRouter'
+        # Load providers and model descriptions from central registry
+        providers_cfg = get_providers_config()
+        self.providers_config = {}
+        for key, cfg in providers_cfg.items():
+            display = cfg.get('display_name', key.title())
+            self.providers_config[display] = {
+                'api_key_env': cfg.get('api_key_env', ''),
+                'models': cfg.get('models', []),
+                'display_name': display,
+                'description': cfg.get('description', '')
             }
-        }
-        
-        self.model_descriptions = {
-            "openai/gpt-4": "🎯 Reliable and consistent, great for educational content",
-            "openai/gpt-4o": "🚀 Latest OpenAI model with enhanced capabilities",
-            "gemini/gemini-1.5-pro-002": "🧠 Advanced reasoning, excellent for complex mathematical concepts",
-            "gemini/gemini-2.5-flash-preview-04-17": "⚡ Fast processing, good for quick prototypes",
-            "anthropic/claude-3-5-sonnet-20241022": "📚 Excellent at detailed explanations and structured content",
-            "anthropic/claude-3-haiku": "💨 Fast and efficient for simpler tasks",
-            "openrouter/openai/gpt-4o": "🌐 GPT-4o via OpenRouter - Powerful and versatile",
-            "openrouter/openai/gpt-4o-mini": "🌐 GPT-4o Mini via OpenRouter - Fast and cost-effective",
-            "openrouter/anthropic/claude-3.5-sonnet": "🌐 Claude 3.5 Sonnet via OpenRouter - Excellent reasoning",
-            "openrouter/anthropic/claude-3-haiku": "🌐 Claude 3 Haiku via OpenRouter - Quick responses",
-            "openrouter/google/gemini-pro-1.5": "🌐 Gemini Pro 1.5 via OpenRouter - Google's advanced model",
-            "openrouter/deepseek/deepseek-chat": "🌐 DeepSeek Chat via OpenRouter - Advanced conversation",
-            "openrouter/qwen/qwen-2.5-72b-instruct": "🌐 Qwen 2.5 72B via OpenRouter - Alibaba's flagship model",
-            "openrouter/meta-llama/llama-3.1-8b-instruct:free": "🌐 Llama 3.1 8B via OpenRouter - Free open source model",
-            "openrouter/microsoft/phi-3-mini-128k-instruct:free": "🌐 Phi-3 Mini via OpenRouter - Free Microsoft model"
-        }
+
+        self.model_descriptions = get_model_descriptions()
         
         self.api_keys: Dict[str, str] = {}
         self.selected_provider: Optional[str] = None

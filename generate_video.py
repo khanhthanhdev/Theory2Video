@@ -1,7 +1,7 @@
 import os
-import json
 import asyncio
 import uuid
+import json
 from typing import Union, List, Dict, Optional, Protocol
 from dataclasses import dataclass
 from abc import ABC, abstractmethod
@@ -10,7 +10,6 @@ import re
 from dotenv import load_dotenv
 
 from mllm_tools.litellm import LiteLLMWrapper
-from mllm_tools.openrouter import OpenRouterWrapper
 from src.core.video_planner import EnhancedVideoPlanner
 from src.core.code_generator import CodeGenerator  # Use existing CodeGenerator
 from src.core.video_renderer import VideoRenderer  # Use existing VideoRenderer
@@ -18,15 +17,17 @@ from src.utils.utils import extract_xml
 from src.config.config import Config
 from task_generator import get_banned_reasonings
 from task_generator.prompts_raw import (_code_font_size, _code_disable, _code_limit, _prompt_manim_cheatsheet)
+from src.utils.model_registry import (
+    get_allowed_models,
+    get_default_model,
+)
 
 # Load configuration
 load_dotenv(override=True)
 
-# Load allowed models
-allowed_models_path = os.path.join(os.path.dirname(__file__), 'src', 'utils', 'allowed_models.json')
-with open(allowed_models_path, 'r') as f:
-    allowed_models_data = json.load(f)
-    allowed_models = allowed_models_data.get("allowed_models", [])
+# Single source of truth for models
+allowed_models = get_allowed_models()
+default_model = get_default_model()
 
 @dataclass
 class VideoGenerationConfig:
@@ -34,6 +35,7 @@ class VideoGenerationConfig:
     planner_model: str
     scene_model: Optional[str] = None
     helper_model: Optional[str] = None
+    temperature: float = 0.7
     output_dir: str = "output"
     verbose: bool = False
     use_rag: bool = False
@@ -85,24 +87,14 @@ class ComponentFactory:
     @staticmethod
     def create_model(model_name: str, config: VideoGenerationConfig) -> ModelProvider:
         """Create AI model wrapper."""
-        # Use OpenRouter wrapper for OpenRouter models
-        if model_name.startswith('openrouter/'):
-            return OpenRouterWrapper(
-                model_name=model_name,
-                temperature=0.7,
-                print_cost=True,
-                verbose=config.verbose,
-                use_langfuse=config.use_langfuse
-            )
-        else:
-            # Use LiteLLM wrapper for other models
-            return LiteLLMWrapper(
-                model_name=model_name,
-                temperature=0.7,
-                print_cost=True,
-                verbose=config.verbose,
-                use_langfuse=config.use_langfuse
-            )
+        # Use LiteLLM for OpenAI, Gemini, and Bedrock
+        return LiteLLMWrapper(
+            model_name=model_name,
+            temperature=config.temperature,
+            print_cost=True,
+            verbose=config.verbose,
+            use_langfuse=config.use_langfuse
+        )
     
     @staticmethod
     def create_planner(planner_model: ModelProvider, helper_model: ModelProvider, 
@@ -152,7 +144,12 @@ class ComponentFactory:
         return VideoRenderer(  # Use existing VideoRenderer
             output_dir=config.output_dir,
             print_response=config.verbose,
-            use_visual_fix_code=config.use_visual_fix_code
+            use_visual_fix_code=config.use_visual_fix_code,
+            max_concurrent_renders=config.max_concurrent_renders,
+            enable_caching=config.enable_caching,
+            default_quality=config.default_quality,
+            use_gpu_acceleration=config.use_gpu_acceleration,
+            preview_mode=config.preview_mode
         )
 
 # Enhanced VideoRenderer wrapper to add async methods
@@ -229,11 +226,10 @@ class AsyncVideoRendererWrapper:
     
     async def combine_videos_optimized(self, topic: str, **kwargs) -> str:
         """Async wrapper for video combination."""
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(
-            None,
-            self.renderer.combine_videos,
-            topic
+        # Call the renderer's async combine directly to preserve kwargs like hardware acceleration
+        return await self.renderer.combine_videos_optimized(
+            topic=topic,
+            use_hardware_acceleration=kwargs.get('use_hardware_acceleration', False)
         )
 
 # Service classes (Single Responsibility Principle)
@@ -506,8 +502,37 @@ class EnhancedVideoGenerator:
         print(f"📝 Generating scene outline for: {topic}")
         return await self.planner.generate_scene_outline(topic, description, self.session_id)
 
-    async def generate_video_pipeline(self, topic: str, description: str, 
-                                    only_plan: bool = False, 
+    def _normalize_specific_scenes(self, specific_scenes):
+        """Normalize `specific_scenes` to a set of ints or None.
+
+        Accepts None, list/tuple/set of ints/strings, or a string like
+        "1,3,5" or "1 3 5". Returns a set[int] for fast membership or None.
+        """
+        if specific_scenes is None:
+            return None
+        # Empty string -> None
+        if isinstance(specific_scenes, str):
+            s = specific_scenes.strip()
+            if not s:
+                return None
+            # Extract any digit sequences to be permissive (commas/spaces supported)
+            nums = re.findall(r"\d+", s)
+            return set(int(n) for n in nums)
+        # Iterable forms
+        if isinstance(specific_scenes, (list, tuple, set)):
+            normalized = set()
+            for x in specific_scenes:
+                try:
+                    normalized.add(int(x))
+                except (TypeError, ValueError):
+                    # Skip non-castable entries
+                    continue
+            return normalized
+        # Unknown type
+        return None
+
+    async def generate_video_pipeline(self, topic: str, description: str,
+                                    only_plan: bool = False,
                                     specific_scenes: List[int] = None) -> None:
         """Complete video generation pipeline with enhanced performance."""
         
@@ -519,9 +544,12 @@ class EnhancedVideoGenerator:
         # Step 1: Load or generate scene outline
         scene_outline = await self._load_or_generate_outline(topic, description, file_prefix)
         
+        # Normalize scenes filter early to avoid type issues
+        normalized_scenes = self._normalize_specific_scenes(specific_scenes)
+
         # Step 2: Generate implementation plans
         implementation_plans = await self._generate_implementation_plans(
-            topic, description, scene_outline, file_prefix, specific_scenes
+            topic, description, scene_outline, file_prefix, normalized_scenes
         )
         
         if only_plan:
@@ -545,27 +573,68 @@ class EnhancedVideoGenerator:
         if os.path.exists(scene_outline_path):
             with open(scene_outline_path, "r") as f:
                 scene_outline = f.read()
-            print(f"📄 Loaded existing scene outline for: {topic}")
             
-            # Detect plugins if RAG is enabled
-            if self.config.use_rag and hasattr(self.planner, 'rag_integration'):
-                plugins = self.planner.rag_integration.detect_relevant_plugins(topic, description)
-                if plugins:
-                    self.planner.rag_integration.set_relevant_plugins(plugins)
-                    print(f"🔌 Detected relevant plugins: {plugins}")
-        else:
-            print(f"📝 Generating new scene outline for: {topic}")
-            scene_outline = await self.planner.generate_scene_outline(topic, description, self.session_id)
-            
-            os.makedirs(os.path.join(self.config.output_dir, file_prefix), exist_ok=True)
-            with open(scene_outline_path, "w") as f:
-                f.write(scene_outline)
+            # Validate that the loaded content is a valid scene outline, not an error message
+            if self._is_valid_scene_outline(scene_outline):
+                print(f"📄 Loaded existing scene outline for: {topic}")
+                
+                # Detect plugins if RAG is enabled
+                if self.config.use_rag and hasattr(self.planner, 'rag_integration'):
+                    plugins = self.planner.rag_integration.detect_relevant_plugins(topic, description)
+                    if plugins:
+                        self.planner.rag_integration.set_relevant_plugins(plugins)
+                        print(f"🔌 Detected relevant plugins: {plugins}")
+                        
+                return scene_outline
+            else:
+                print(f"⚠️ Existing scene outline appears corrupted or contains errors. Regenerating...")
+                # Remove the corrupted file
+                try:
+                    os.remove(scene_outline_path)
+                except Exception as e:
+                    print(f"Warning: Could not remove corrupted outline file: {e}")
+        
+        print(f"📝 Generating new scene outline for: {topic}")
+        scene_outline = await self.planner.generate_scene_outline(topic, description, self.session_id)
+        
+        os.makedirs(os.path.join(self.config.output_dir, file_prefix), exist_ok=True)
+        with open(scene_outline_path, "w") as f:
+            f.write(scene_outline)
         
         return scene_outline
+    
+    def _is_valid_scene_outline(self, content: str) -> bool:
+        """Check if the content is a valid scene outline and not an error message."""
+        if not content or not content.strip():
+            return False
+            
+        # Check for common error patterns
+        error_indicators = [
+            "Error:",
+            "Exception:",
+            "Traceback",
+            "litellm.NotFoundError",
+            "VertexAIException",
+            '"error"',
+            '"code": 404',
+            "models/gemini-",  # Check for model-specific errors
+            "is not found for API"
+        ]
+        
+        for indicator in error_indicators:
+            if indicator in content:
+                return False
+        
+        # Check for valid scene outline structure
+        # A valid scene outline should contain scene markers
+        if not any(pattern in content for pattern in ["<SCENE_", "Scene ", "scene "]):
+            return False
+            
+        return True
 
-    async def _generate_implementation_plans(self, topic: str, description: str, 
+    async def _generate_implementation_plans(self, topic: str, description: str,
                                            scene_outline: str, file_prefix: str,
-                                           specific_scenes: List[int] = None) -> Dict[int, str]:
+                                           specific_scenes: Optional[set] = None) -> Dict[int, str]:
         """Generate missing implementation plans."""
         
         # First, ensure the topic directory exists
@@ -587,7 +656,7 @@ class EnhancedVideoGenerator:
                 print(f"Found {scene_count} scenes in the outline.")
                 implementation_plans_dict = {i: None for i in range(1, scene_count + 1)}
             
-            # Find missing scenes
+            # Find missing scenes, honoring optional filter
             missing_scenes = [
                 scene_num for scene_num, plan in implementation_plans_dict.items()
                 if plan is None and (specific_scenes is None or scene_num in specific_scenes)
@@ -612,16 +681,19 @@ class EnhancedVideoGenerator:
                             print(f"❌ Error: No implementation plans were returned!")
                             return implementation_plans_dict
                             
-                        # Update missing plans
+                        # Update missing plans (map by scene index to avoid misalignment)
                         updated_count = 0
-                        for i, scene_num in enumerate(sorted(missing_scenes)):
-                            if i < len(all_plans):
-                                plan = all_plans[i]
+                        for scene_num in sorted(missing_scenes):
+                            idx = scene_num - 1
+                            if 0 <= idx < len(all_plans):
+                                plan = all_plans[idx]
                                 if isinstance(plan, str) and plan.strip():
                                     implementation_plans_dict[scene_num] = plan
                                     updated_count += 1
                                 else:
                                     print(f"⚠️ Warning: Empty or invalid plan for scene {scene_num}")
+                            else:
+                                print(f"⚠️ Warning: No plan returned for scene index {scene_num} (out of range)")
                         
                         print(f"✅ Generated {updated_count}/{len(missing_scenes)} implementation plans")
                         
@@ -854,7 +926,7 @@ class VideoGeneratorCLI:
         
         # Model configuration
         parser.add_argument('--model', type=str, choices=allowed_models,
-                          default='gemini/gemini-2.5-flash-preview-04-17', help='AI model to use')
+                          default=default_model, help='AI model to use')
         parser.add_argument('--scene_model', type=str, choices=allowed_models,
                           help='Specific model for scene generation')
         parser.add_argument('--helper_model', type=str, choices=allowed_models,
