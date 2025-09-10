@@ -19,8 +19,8 @@ async def main():
     # --- 1. Hardcoded Configuration ---
     # EDIT these values to change the models and providers.
     # --------------------------------------------------------------------------
-    PLANNER_MODEL = "gemini/gemini-2.5-pro" # e.g., "openai/gpt-4o", "gemini/gemini-1.5-pro"
-    HELPER_MODEL = "gemini/gemini-2.5-pro" # e.g., "openai/gpt-4o-mini", "bedrock/anthropic.claude-3-sonnet..."
+    PLANNER_MODEL = "openai/o3-mini" # e.g., "openai/gpt-4o", "gemini/gemini-1.5-pro"
+    HELPER_MODEL = "openai/o3-mini" # e.g., "openai/gpt-4o-mini", "bedrock/anthropic.claude-3-sonnet..."
 
     # --- Credentials ---
     # IMPORTANT: Set the credentials for the providers you are using.
@@ -37,8 +37,8 @@ async def main():
     # --- 2. Inputs ---
     # EDIT these values to change the video content.
     # --------------------------------------------------------------------------
-    topic = "Introduction to Newton Law of Motion"
-    description = "Newton's first law of motion states that a body remains in a state of rest or uniform motion in a straight line unless acted upon by an external force. This means that an object at rest will not move unless a force is applied, and an object in motion will not change its speed or direction unless a force acts on it. This law is fundamental in understanding the behavior of objects in classical mechanics. Britannica +2 Britannica Newton laws of motion | Definition, Examples, & History ... Science Facts Newton First Law: Statement, Examples, and Equation View all Britannica Newton laws of motion | Definition, Examples, & History ..."
+    topic = "Gradient Descent"
+    description = "Gradient Descent is a fundamental optimization algorithm used in machine learning and deep learning to minimize a cost function (or loss function). It iteratively adjusts the model's parameters to reduce the error between predicted and actual values."
     output_dir = "live_test_output"
     # --------------------------------------------------------------------------
 

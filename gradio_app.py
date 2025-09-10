@@ -41,6 +41,25 @@ class JobStore:
         self.store_path = Path(store_path)
         self.store_path.parent.mkdir(parents=True, exist_ok=True)
 
+    def _sanitize(self, obj: Any) -> Any:
+        """Recursively remove sensitive keys from nested dicts/lists before persisting."""
+        SENSITIVE_KEYS = {
+            'api_key', 'openai_api_key', 'gemini_api_key', 'google_api_key',
+            'azure_openai_key', 'hf_token', 'huggingface_token',
+            'aws_access_key_id', 'aws_secret_access_key', 'aws_session_token'
+        }
+        if isinstance(obj, dict):
+            cleaned = {}
+            for k, v in obj.items():
+                if isinstance(k, str) and k.lower() in SENSITIVE_KEYS:
+                    # Drop sensitive entries entirely
+                    continue
+                cleaned[k] = self._sanitize(v)
+            return cleaned
+        if isinstance(obj, list):
+            return [self._sanitize(v) for v in obj]
+        return obj
+
     def load_all(self) -> Dict[str, Dict[str, Any]]:
         if not self.store_path.exists():
             return {}
@@ -48,7 +67,15 @@ class JobStore:
             with self.store_path.open('r', encoding='utf-8') as f:
                 data = json.load(f)
             if isinstance(data, dict):
-                return data
+                # Sanitize any secrets found and rewrite file if it changed
+                sanitized = self._sanitize(data)
+                if sanitized != data:
+                    try:
+                        self.save_all(sanitized)
+                    except Exception:
+                        # If save fails, still return sanitized data
+                        pass
+                return sanitized
             return {}
         except Exception as e:
             logger.error(f"Failed to load job history: {e}")
@@ -59,8 +86,10 @@ class JobStore:
             # Ensure the parent directory exists
             self.store_path.parent.mkdir(parents=True, exist_ok=True)
             tmp_path = self.store_path.with_suffix('.tmp')
+            # Sanitize before writing to disk
+            to_write = self._sanitize(jobs)
             with tmp_path.open('w', encoding='utf-8') as f:
-                json.dump(jobs, f, indent=2)
+                json.dump(to_write, f, indent=2)
             tmp_path.replace(self.store_path)
         except Exception as e:
             logger.error(f"Failed to save job history: {e}")
@@ -585,8 +614,7 @@ def submit_job(topic, description,
             'context_learning_path': context_learning_path or Config.CONTEXT_LEARNING_PATH,
             'embedding_model': embedding_model or Config.EMBEDDING_MODEL,
             # Persist the provider inferred from the model
-            'provider': provider_prefix or 'openai',
-            'api_key': api_key.strip()
+            'provider': provider_prefix or 'openai'
         }
         
         # Start job asynchronously
