@@ -138,3 +138,4 @@ Requirements:
 9. Currently, there are no images or other assets available locally or remotely for you to use in the scene. Only include elements that can be generated through manim.
 10. **Do not generate any code in this plan, except for illustrative examples where necessary. This plan is for outlining the scene and should not include any python code.**
 11. **The purpose of this plan is to be a detailed guide for a human to implement the scene in manim.**
+12. IMPORTANT: If you can .play() to render animation, you should close it or do something before have other phase to prevent element overlapping

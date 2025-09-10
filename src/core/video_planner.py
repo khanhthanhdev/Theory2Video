@@ -34,7 +34,8 @@ class EnhancedVideoPlanner:
                  session_id=None, chroma_db_path="data/rag/chroma_db", 
                  manim_docs_path="data/rag/manim_docs", 
                  embedding_model="text-embedding-ada-002", use_langfuse=True,
-                 max_scene_concurrency=5, max_step_concurrency=3, enable_caching=True):
+                 max_scene_concurrency=5, max_step_concurrency=3, enable_caching=True,
+                 use_all_scenes_single_call: bool = False):
         
         self.planner_model = planner_model
         self.helper_model = helper_model if helper_model is not None else planner_model
@@ -45,6 +46,7 @@ class EnhancedVideoPlanner:
         self.use_rag = use_rag
         self.session_id = session_id
         self.enable_caching = enable_caching
+        self.use_all_scenes_single_call = use_all_scenes_single_call
         
         # Enhanced concurrency control
         self.max_scene_concurrency = max_scene_concurrency
@@ -110,7 +112,7 @@ class EnhancedVideoPlanner:
         async with aiofiles.open(file_path, 'w', encoding='utf-8') as f:
             await f.write(content)
 
-    async def _async_file_read(self, file_path: str) -> str:
+    async def _async_file_read(self, file_path: str) -> Optional[str]:
         """Asynchronous file reading."""
         try:
             async with aiofiles.open(file_path, 'r', encoding='utf-8') as f:
@@ -173,6 +175,17 @@ class EnhancedVideoPlanner:
             return template(examples="\n".join(examples))
         return None
 
+    async def _call_model_async(self, model, prompt: str, metadata: Dict) -> str:
+        """Run a potentially blocking model call in a thread to avoid blocking the event loop."""
+        loop = asyncio.get_running_loop()
+        def _invoke():
+            return model(_prepare_text_inputs(prompt), metadata=metadata)
+        response = await loop.run_in_executor(self.thread_pool, _invoke)
+        if self.print_response:
+            preview = response[:500] + ("..." if len(response) > 500 else "")
+            print(f"[Model Response Preview] {metadata.get('generation_name','')}: {preview}")
+        return response
+
     async def generate_scene_outline(self, topic: str, description: str, session_id: str) -> str:
         """Enhanced scene outline generation with async I/O."""
         start_time = time.time()
@@ -195,8 +208,9 @@ class EnhancedVideoPlanner:
             print(f"✅ Detected relevant plugins: {self.relevant_plugins}")
 
         # Generate plan using planner model
-        response_text = self.planner_model(
-            _prepare_text_inputs(prompt),
+        response_text = await self._call_model_async(
+            self.planner_model,
+            prompt,
             metadata={
                 "generation_name": "scene_outline", 
                 "tags": [topic, "scene-outline"], 
@@ -248,10 +262,15 @@ class EnhancedVideoPlanner:
             # Generate prompt
             prompt = prompt_func(*args)
             
-            # Add context examples if available
-            example_type = step_name.replace('_plan', '').replace('scene_', '')
-            if self._context_cache.get(example_type):
-                prompt += f"\n\nHere are some example {step_name}s:\n{self._context_cache[example_type]}"
+            # Add context examples if available (mapped to known keys)
+            example_key_map = {
+                'scene_vision_storyboard': 'scene_vision_storyboard',
+                'scene_technical_implementation': 'technical_implementation',
+                'scene_animation_narration': 'scene_animation_narration'
+            }
+            cache_key = example_key_map.get(step_name)
+            if cache_key and self._context_cache.get(cache_key):
+                prompt += f"\n\nHere are some example {step_name}s:\n{self._context_cache[cache_key]}"
             
             # Add RAG context if enabled
             if self.use_rag and self.rag_integration:
@@ -269,8 +288,9 @@ class EnhancedVideoPlanner:
                     prompt += f"\n\n{retrieved_docs}"
 
             # Generate content
-            response = self.planner_model(
-                _prepare_text_inputs(prompt),
+            response = await self._call_model_async(
+                self.planner_model,
+                prompt,
                 metadata={
                     "generation_name": step_name,
                     "trace_id": scene_trace_id,
@@ -349,122 +369,148 @@ class EnhancedVideoPlanner:
         
         return []
 
-    async def _generate_scene_implementation_single_enhanced(self, topic: str, description: str, 
-                                                           scene_outline_i: str, scene_number: int, 
-                                                           file_prefix: str, session_id: str, 
+    async def _generate_combined_rag_queries(self, scene_outline: str, scene_trace_id: str, topic: str, scene_number: int, session_id: str) -> List[Dict]:
+        """
+        Generates RAG queries for both storyboard and technical implementation in a single LLM call
+        to reduce latency.
+        """
+        plugins_info = ""
+        if self.relevant_plugins:
+            plugins_info = f"\n        The following plugins have been identified as relevant: {self.relevant_plugins}.\n        You can generate queries related to these plugins.\n        "
+
+        prompt = f"""
+        You are an expert in Manim and video production. Based on the following scene outline, generate a list of search queries to find relevant documentation for creating both the visual storyboard and the technical implementation.
+        {plugins_info}
+        Scene Outline:
+        {scene_outline}
+
+        Provide a JSON array of query objects. Each object should have a "query" field. The queries should be concise and effective for a documentation search engine.
+
+        Example format:
+        ```json
+        [
+            {{"query": "Manim camera zoom"}},
+            {{"query": "concept of derivative visualization"}},
+            {{"query": "Manim Write text animation"}}
+        ]
+        ```
+        Your response must contain only the JSON array inside a ```json block.
+        """
+
+        response = await self._call_model_async(
+            self.helper_model,
+            prompt,
+            metadata={
+                "generation_name": "rag_query_generation_combined",
+                "trace_id": scene_trace_id,
+                "tags": [topic, f"scene{scene_number}", "rag-query"],
+                "session_id": session_id
+            }
+        )
+
+        try:
+            # Robustly extract JSON from response, handling markdown code blocks
+            match = re.search(r'```json\s*\n(.*?)\n```', response, re.DOTALL)
+            if match:
+                json_part = match.group(1)
+            else:
+                # Fallback for raw JSON
+                json_part = response[response.find('['):response.rfind(']')+1]
+            
+            if not json_part:
+                return []
+
+            queries = json.loads(json_part)
+            return queries
+        except (json.JSONDecodeError, IndexError) as e:
+            print(f"⚠️ Warning: Could not parse RAG queries for scene {scene_number}. Error: {e}. Proceeding without RAG for this part.")
+            return []
+
+    async def _generate_scene_implementation_single_enhanced(self, topic: str, description: str,
+                                                           scene_outline_i: str, scene_number: int,
+                                                           file_prefix: str, session_id: str,
                                                            scene_trace_id: str) -> str:
-        """Enhanced single scene implementation with parallel steps."""
+        """Generates all implementation plans for a single scene in one LLM call."""
         start_time = time.time()
-        print(f"Starting scene {scene_number} implementation (parallel processing)")
-        
+        print(f"🚀 Starting scene {scene_number} implementation (Consolidated Call)")
+
         # Setup directories
         scene_dir = os.path.join(self.output_dir, file_prefix, f"scene{scene_number}")
         subplan_dir = os.path.join(scene_dir, "subplans")
         await self._ensure_directories(scene_dir, subplan_dir)
 
         # Save scene trace ID
-        trace_id_file = os.path.join(subplan_dir, "scene_trace_id.txt")
-        await self._async_file_write(trace_id_file, scene_trace_id)
+        await self._async_file_write(os.path.join(subplan_dir, "scene_trace_id.txt"), scene_trace_id)
 
-        # Define all steps with their configurations
-        steps_config = [
-            {
-                'name': 'scene_vision_storyboard',
-                'prompt_func': get_prompt_scene_vision_storyboard,
-                'args': (scene_number, topic, description, scene_outline_i, self.relevant_plugins),
-                'output_path': os.path.join(subplan_dir, f"{file_prefix}_scene{scene_number}_vision_storyboard_plan.txt")
+        # Check cache first if enabled
+        combined_plan_path = os.path.join(scene_dir, f"{file_prefix}_scene{scene_number}_implementation_plan.txt")
+        if self.enable_caching:
+            cached_content = await self._async_file_read(combined_plan_path)
+            if cached_content:
+                print(f"✅ Using cached implementation plan for scene {scene_number}")
+                return cached_content
+
+        # --- New Consolidated Prompt ---
+        # This prompt asks for all three plans at once.
+        prompt = f"""
+        You are an expert in educational video production and Manim animation.
+        Your task is to generate the complete implementation plan for a single scene in a video about '{topic}'.
+
+        Video Description: {description}
+        Scene Outline: {scene_outline_i}
+
+        Please generate the following three plans enclosed in their respective XML tags:
+        1.  <SCENE_VISION_STORYBOARD_PLAN>: A detailed visual storyboard.
+        2.  <SCENE_TECHNICAL_IMPLEMENTATION_PLAN>: A technical plan for Manim code.
+        3.  <SCENE_ANIMATION_NARRATION_PLAN>: The narration script for the scene.
+
+        Ensure the response contains all three plans within a single block.
+        """
+
+        # Add RAG context if enabled
+        if self.use_rag and self.rag_integration:
+            # For a consolidated call, we generate RAG queries for all steps in one go
+            all_queries = await self._generate_combined_rag_queries(
+                scene_outline_i, scene_trace_id, topic, scene_number, session_id
+            )
+            if all_queries:
+                retrieved_docs = self.rag_integration.get_relevant_docs(all_queries, scene_trace_id, topic, scene_number)
+                prompt += f"\n\nHere is some context from relevant documentation:\n{retrieved_docs}"
+
+        # --- Single LLM Call ---
+        response = await self._call_model_async(
+            self.planner_model,
+            prompt,
+            metadata={
+                "generation_name": "scene_implementation_combined",
+                "trace_id": scene_trace_id,
+                "tags": [topic, f"scene{scene_number}"],
+                "session_id": session_id
             }
-        ]
-
-        # Execute Step 1: Vision Storyboard (sequential dependency)
-        vision_storyboard_content, _ = await self._generate_scene_step_parallel(
-            steps_config[0]['name'],
-            steps_config[0]['prompt_func'],
-            scene_trace_id,
-            topic,
-            scene_number,
-            session_id,
-            steps_config[0]['output_path'],
-            *steps_config[0]['args']
         )
 
-        # Prepare Step 2 and 3 for parallel execution (both depend on Step 1)
-        remaining_steps = [
-            {
-                'name': 'scene_technical_implementation',
-                'prompt_func': get_prompt_scene_technical_implementation,
-                'args': (scene_number, topic, description, scene_outline_i, vision_storyboard_content, self.relevant_plugins),
-                'output_path': os.path.join(subplan_dir, f"{file_prefix}_scene{scene_number}_technical_implementation_plan.txt")
-            },
-            {
-                'name': 'scene_animation_narration',
-                'prompt_func': get_prompt_scene_animation_narration,
-                'args': (scene_number, topic, description, scene_outline_i, vision_storyboard_content, None, self.relevant_plugins),
-                'output_path': os.path.join(subplan_dir, f"{file_prefix}_scene{scene_number}_animation_narration_plan.txt")
-            }
-        ]
+        # --- Extract and Save Individual Plans ---
+        def extract_plan(tag, text):
+            match = re.search(f'<{tag}>(.*?)</{tag}>', text, re.DOTALL)
+            return match.group(1).strip() if match else f"<{tag}>Plan not generated.</{tag}>"
 
-        # Execute Steps 2 and 3 in parallel
-        parallel_tasks = []
-        for step_config in remaining_steps:
-            task = asyncio.create_task(
-                self._generate_scene_step_parallel(
-                    step_config['name'],
-                    step_config['prompt_func'],
-                    scene_trace_id,
-                    topic,
-                    scene_number,
-                    session_id,
-                    step_config['output_path'],
-                    *step_config['args']
-                )
-            )
-            parallel_tasks.append(task)
+        vision_storyboard_content = extract_plan('SCENE_VISION_STORYBOARD_PLAN', response)
+        technical_implementation_content = extract_plan('SCENE_TECHNICAL_IMPLEMENTATION_PLAN', response)
+        animation_narration_content = extract_plan('SCENE_ANIMATION_NARRATION_PLAN', response)
 
-        # Wait for parallel tasks to complete
-        parallel_results = await asyncio.gather(*parallel_tasks)
-        technical_implementation_content = parallel_results[0][0]
-        animation_narration_content = parallel_results[1][0]
+        await self._async_file_write(os.path.join(subplan_dir, f"{file_prefix}_scene{scene_number}_vision_storyboard_plan.txt"), vision_storyboard_content)
+        await self._async_file_write(os.path.join(subplan_dir, f"{file_prefix}_scene{scene_number}_technical_implementation_plan.txt"), technical_implementation_content)
+        await self._async_file_write(os.path.join(subplan_dir, f"{file_prefix}_scene{scene_number}_animation_narration_plan.txt"), animation_narration_content)
 
-        # Update animation narration args with technical implementation and regenerate if needed
-        if technical_implementation_content:
-            updated_animation_args = (
-                scene_number, topic, description, scene_outline_i, 
-                vision_storyboard_content, technical_implementation_content, self.relevant_plugins
-            )
-            
-            animation_narration_content, _ = await self._generate_scene_step_parallel(
-                'scene_animation_narration',
-                get_prompt_scene_animation_narration,
-                scene_trace_id,
-                topic,
-                scene_number,
-                session_id,
-                remaining_steps[1]['output_path'],
-                *updated_animation_args
-            )
-
-        # Combine all implementation plans
+        # --- Combine and Save Final Plan ---
         implementation_plan = (
             f"{vision_storyboard_content}\n\n"
             f"{technical_implementation_content}\n\n"
             f"{animation_narration_content}\n\n"
         )
-
-        # Ensure scene directory exists (just to be extra safe)
-        scene_dir = os.path.join(self.output_dir, file_prefix, f"scene{scene_number}")
-        await self._ensure_directories(scene_dir)
-        
-        # Save combined implementation plan
-        combined_plan_path = os.path.join(scene_dir, f"{file_prefix}_scene{scene_number}_implementation_plan.txt")
         combined_content = f"# Scene {scene_number} Implementation Plan\n\n{implementation_plan}"
-        
-        try:
-            await self._async_file_write(combined_plan_path, combined_content)
-            print(f"✅ Saved implementation plan for scene {scene_number} to: {combined_plan_path}")
-        except Exception as e:
-            print(f"❌ Error saving implementation plan for scene {scene_number}: {e}")
-            raise
+        await self._async_file_write(combined_plan_path, combined_content)
+        print(f"✅ Saved implementation plan for scene {scene_number} to: {combined_plan_path}")
 
         elapsed_time = time.time() - start_time
         print(f"Scene {scene_number} implementation completed in {elapsed_time:.2f}s")
@@ -476,9 +522,13 @@ class EnhancedVideoPlanner:
         """Enhanced concurrent scene implementation with better performance."""
         start_time = time.time()
         
+        # If configured, handle all scenes in a single LLM call
+        if self.use_all_scenes_single_call:
+            return await self.generate_scene_implementation_all_in_one(topic, description, plan, session_id)
+        
         # Extract scene information
         scene_outline = extract_xml(plan)
-        scene_number = len(re.findall(r'<SCENE_(\d+)>[^<]', scene_outline))
+        scene_number = len(re.findall(r'<SCENE_(\d+)>', scene_outline))
         file_prefix = re.sub(r'[^a-z0-9_]+', '_', topic.lower())
         
         print(f"Starting implementation generation for {scene_number} scenes with max concurrency: {self.max_scene_concurrency}")
@@ -546,6 +596,199 @@ class EnhancedVideoPlanner:
             raise
         
         return successful_plans
+
+    async def generate_scene_implementation_all_in_one(self, topic: str, description: str,
+                                                       plan: str, session_id: str) -> List[str]:
+        """
+        Generate implementation plans for ALL scenes in a single LLM call, then
+        parse and save per-scene outputs to mirror the separate-call behavior.
+        Returns a list of per-scene implementation plan strings (vision + technical + narration concatenated).
+        """
+        start_time = time.time()
+        scene_outline = extract_xml(plan)
+        scene_count = len(re.findall(r'<SCENE_(\d+)>', scene_outline))
+        file_prefix = re.sub(r'[^a-z0-9_]+', '_', topic.lower())
+
+        if scene_count == 0:
+            print("❌ No scenes found in scene outline.")
+            return []
+
+        # If everything is already cached, skip model call
+        if self.enable_caching:
+            all_exist = True
+            for i in range(1, scene_count + 1):
+                combined_plan_path = os.path.join(self.output_dir, file_prefix, f"scene{i}", f"{file_prefix}_scene{i}_implementation_plan.txt")
+                if not os.path.exists(combined_plan_path):
+                    all_exist = False
+                    break
+            if all_exist:
+                print("✅ Using cached implementation plans for all scenes")
+                results: List[str] = []
+                for i in range(1, scene_count + 1):
+                    combined_plan_path = os.path.join(self.output_dir, file_prefix, f"scene{i}", f"{file_prefix}_scene{i}_implementation_plan.txt")
+                    content = await self._async_file_read(combined_plan_path)
+                    results.append(content or "")
+                return results
+
+        # Build a single prompt for all scenes
+        # Construct a detailed template to steer output depth
+        example_block = "\n".join([
+            (
+                f"    <SCENE_{i}>\n"
+                f"        <SCENE_VISION_STORYBOARD_PLAN>\n"
+                f"[SCENE_VISION]\n"
+                f"- Scene overview, key takeaway, and visual learning objectives using specific Manim classes (MathTex, Tex, Axes, VGroup, Shapes).\n"
+                f"- Explain how visuals support learning; adhere to safe area (0.5 units) and spacing (0.3 units).\n"
+                f"\n[STORYBOARD]\n"
+                f"- Visual Flow & Pacing: sequence of animations with types (Create, Write, FadeIn, Transform, etc.) and run_time.\n"
+                f"- Sub-scene Breakdown (>= 3). For each sub-scene include:\n"
+                f"  * Visual Element (primary object).\n"
+                f"  * Animation steps (>= 4) with explicit run_time.\n"
+                f"  * Relative positioning only (.next_to/.align_to/.shift) with buff >= 0.3; no absolute coordinates.\n"
+                f"  * Color/style, and explicit notes on maintaining safe area and spacing.\n"
+                f"        </SCENE_VISION_STORYBOARD_PLAN>\n"
+                f"\n        <SCENE_TECHNICAL_IMPLEMENTATION_PLAN>\n"
+                f"0. Dependencies: manim only (+ allowed plugins), no external assets.\n"
+                f"1. Manim Object Selection & Configuration: list all objects with content, font sizes, colors, shape dims; Tex vs MathTex rules and LaTeX notes.\n"
+                f"2. VGroup Structure & Hierarchy: parent-child groupings and internal spacing >= 0.3.\n"
+                f"3. Spatial Positioning Strategy: reference objects/edges, methods, and buff values; checkpoints to avoid text overflow; font size guidance.\n"
+                f"4. Animation Methods & Lifecycle: Create/Write/Transform/Uncreate/FadeIn/FadeOut; run_time, lag_ratio, Wait buffers.\n"
+                f"5. Code Structure & Reusability: helper functions, construct flow, and comments referencing docs.\n"
+                f"Mandatory Safety Checks: safe area 0.5, spacing 0.3, Wait() buffers.\n"
+                f"        </SCENE_TECHNICAL_IMPLEMENTATION_PLAN>\n"
+                f"\n        <SCENE_ANIMATION_NARRATION_PLAN>\n"
+                f"[ANIMATION_STRATEGY]\n"
+                f"- Pedagogical animation plan; VGroup transitions and element animations with run_time; explain learning purpose.\n"
+                f"- Scene flow with pedagogical pacing; Wait() with durations and reasons.\n"
+                f"\n[NARRATION]\n"
+                f"- Full narration script with embedded animation timing cues; smooth continuity with previous/next scenes.\n"
+                f"        </SCENE_ANIMATION_NARRATION_PLAN>\n"
+                f"    </SCENE_{i}>\n"
+            )
+            for i in range(1, scene_count + 1)
+        ])
+
+        prompt = f"""
+You are an expert in educational video production and Manim animation.
+Task: Generate complete, highly detailed implementation plans for ALL scenes of '{topic}'.
+
+Video Description: {description}
+Scene Outline:
+{scene_outline}
+
+Global Rules (Apply to every scene):
+- Safe area margins: 0.5 units on all sides; all objects must remain within.
+- Minimum spacing: 0.3 units between all objects/VGroups (edge-to-edge).
+- Positioning: only relative methods (.next_to/.align_to/.shift) with explicit buff values; no absolute coordinates.
+- Text: MathTex for math; Tex for other text; use \\text{{}} inside MathTex if mixing.
+- Every animation must include run_time; use Wait() buffers with a pedagogical reason.
+- No external assets; only Manim (and explicitly allowed plugins if clearly justified).
+
+Respond ONLY with the XML block below (no extra text before/after):
+```xml
+<SCENE_IMPLEMENTATION_PLANS>
+{example_block}
+</SCENE_IMPLEMENTATION_PLANS>
+```
+"""
+
+        # Optionally include trimmed context-learning examples to anchor the expected depth
+        if self.use_context_learning:
+            def _trim(s: Optional[str], n: int = 1200) -> str:
+                if not s:
+                    return ""
+                return s[:n]
+            examples = []
+            if self._context_cache.get('scene_vision_storyboard'):
+                examples.append("Example storyboard detail:\n" + _trim(self._context_cache['scene_vision_storyboard']))
+            if self._context_cache.get('technical_implementation'):
+                examples.append("Example technical implementation detail:\n" + _trim(self._context_cache['technical_implementation']))
+            if self._context_cache.get('scene_animation_narration'):
+                examples.append("Example animation+narration detail:\n" + _trim(self._context_cache['scene_animation_narration']))
+            if examples:
+                prompt += "\n\nHere are brief examples to illustrate the expected level of detail (do not copy; adapt to this topic):\n" + "\n\n".join(examples)
+
+        # Optionally add a small combined RAG context once
+        if self.use_rag and self.rag_integration:
+            # Generate queries once using the entire outline
+            all_queries = await self._generate_combined_rag_queries(
+                scene_outline, str(uuid.uuid4()), topic, 0, session_id
+            )
+            if all_queries:
+                retrieved_docs = self.rag_integration.get_relevant_docs(
+                    rag_queries=all_queries,
+                    scene_trace_id=str(uuid.uuid4()),
+                    topic=topic,
+                    scene_number=0
+                )
+                prompt += f"\n\nHere is some context from relevant documentation:\n{retrieved_docs}"
+
+        response = await self._call_model_async(
+            self.planner_model,
+            prompt,
+            metadata={
+                "generation_name": "scene_implementation_all_in_one",
+                "tags": [topic, "all-scenes"],
+                "session_id": session_id
+            }
+        )
+
+        # Extract XML block
+        xml_match = re.search(r'```xml\s*\n(.*?)\n```', response, re.DOTALL)
+        if xml_match:
+            response_xml = xml_match.group(1)
+        else:
+            # Fallback: try to find the wrapper or use whole response
+            wrap_match = re.search(r'(<SCENE_IMPLEMENTATION_PLANS>.*?</SCENE_IMPLEMENTATION_PLANS>)', response, re.DOTALL)
+            response_xml = wrap_match.group(1) if wrap_match else response
+
+        # For each scene, extract and save
+        def _extract_inner(tag: str, text: str) -> str:
+            m = re.search(f'<{tag}>(.*?)</{tag}>', text, re.DOTALL)
+            return m.group(1).strip() if m else f"<{tag}>Plan not generated.</{tag}>"
+
+        per_scene_plans: List[str] = []
+        for i in range(1, scene_count + 1):
+            scene_regex = r'(<SCENE_{0}>.*?</SCENE_{0}>)'.format(i)
+            scene_match = re.search(scene_regex, response_xml, re.DOTALL)
+            if not scene_match:
+                print(f"❌ Error: Combined response missing SCENE_{i} block")
+                per_scene_plans.append(f"# Scene {i} - Error: Missing scene block in combined response")
+                continue
+
+            scene_block = scene_match.group(1)
+            vision_storyboard_content = _extract_inner('SCENE_VISION_STORYBOARD_PLAN', scene_block)
+            technical_implementation_content = _extract_inner('SCENE_TECHNICAL_IMPLEMENTATION_PLAN', scene_block)
+            animation_narration_content = _extract_inner('SCENE_ANIMATION_NARRATION_PLAN', scene_block)
+
+            scene_dir = os.path.join(self.output_dir, file_prefix, f"scene{i}")
+            subplan_dir = os.path.join(scene_dir, "subplans")
+            await self._ensure_directories(scene_dir, subplan_dir)
+
+            # Save trace id for each scene
+            scene_trace_id = str(uuid.uuid4())
+            await self._async_file_write(os.path.join(subplan_dir, "scene_trace_id.txt"), scene_trace_id)
+
+            # Save individual subplans
+            await self._async_file_write(os.path.join(subplan_dir, f"{file_prefix}_scene{i}_vision_storyboard_plan.txt"), vision_storyboard_content)
+            await self._async_file_write(os.path.join(subplan_dir, f"{file_prefix}_scene{i}_technical_implementation_plan.txt"), technical_implementation_content)
+            await self._async_file_write(os.path.join(subplan_dir, f"{file_prefix}_scene{i}_animation_narration_plan.txt"), animation_narration_content)
+
+            # Save combined per-scene plan
+            implementation_plan = (
+                f"{vision_storyboard_content}\n\n"
+                f"{technical_implementation_content}\n\n"
+                f"{animation_narration_content}\n\n"
+            )
+            combined_plan_path = os.path.join(scene_dir, f"{file_prefix}_scene{i}_implementation_plan.txt")
+            combined_content = f"# Scene {i} Implementation Plan\n\n{implementation_plan}"
+            await self._async_file_write(combined_plan_path, combined_content)
+
+            per_scene_plans.append(implementation_plan)
+
+        elapsed = time.time() - start_time
+        print(f"✅ All-in-one implementation generation completed in {elapsed:.2f}s for {scene_count} scenes")
+        return per_scene_plans
 
     async def __aenter__(self):
         """Async context manager entry."""

@@ -30,7 +30,7 @@ class OptimizedVideoRenderer:
     """Enhanced video renderer with significant performance optimizations."""
 
     def __init__(self, output_dir="output", print_response=False, use_visual_fix_code=False,
-                 max_concurrent_renders=4, enable_caching=True, default_quality="medium",
+                 max_concurrent_renders=None, enable_caching=True, default_quality="medium",
                  use_gpu_acceleration=False, preview_mode=False):
         """Initialize the enhanced VideoRenderer.
 
@@ -38,7 +38,7 @@ class OptimizedVideoRenderer:
             output_dir (str): Directory for output files
             print_response (bool): Whether to print responses
             use_visual_fix_code (bool): Whether to use visual fix code
-            max_concurrent_renders (int): Maximum concurrent render processes
+            max_concurrent_renders (int): Maximum concurrent render processes (None for adaptive)
             enable_caching (bool): Enable intelligent caching system
             default_quality (str): Default render quality (low/medium/high/preview)
             use_gpu_acceleration (bool): Use GPU acceleration if available
@@ -47,7 +47,12 @@ class OptimizedVideoRenderer:
         self.output_dir = output_dir
         self.print_response = print_response
         self.use_visual_fix_code = use_visual_fix_code
+        
+        # Adaptive concurrency based on CPU count
+        if max_concurrent_renders is None:
+            max_concurrent_renders = min(os.cpu_count() // 2, 3)
         self.max_concurrent_renders = max_concurrent_renders
+        
         self.enable_caching = enable_caching
         self.default_quality = default_quality
         self.use_gpu_acceleration = use_gpu_acceleration
@@ -61,13 +66,13 @@ class OptimizedVideoRenderer:
             'average_time': 0
         }
         
-        # Quality presets for faster rendering
+        # Quality presets for faster rendering with optimized frame rates
         self.quality_presets = {
-            'preview': {'flag': '-ql', 'fps': 15, 'resolution': '480p'},
-            'low': {'flag': '-ql', 'fps': 15, 'resolution': '480p'},
-            'medium': {'flag': '-qm', 'fps': 30, 'resolution': '720p'},
-            'high': {'flag': '-qh', 'fps': 60, 'resolution': '1080p'},
-            'production': {'flag': '-qp', 'fps': 60, 'resolution': '1440p'}
+            'preview': {'flag': '-ql', 'fps': 24, 'resolution': '480p'},
+            'low': {'flag': '-ql', 'fps': 24, 'resolution': '480p'},
+            'medium': {'flag': '-qm', 'fps': 24, 'resolution': '720p'},
+            'high': {'flag': '-qh', 'fps': 30, 'resolution': '1080p'},
+            'production': {'flag': '-qp', 'fps': 60, 'resolution': '1080p'}
         }
         
         # Cache directory for rendered scenes
@@ -114,6 +119,88 @@ class OptimizedVideoRenderer:
         except Exception as e:
             print(f"Warning: Could not cache render: {e}")
 
+    async def render_scene_two_pass(self, code: str, file_prefix: str, curr_scene: int,
+                                   curr_version: int, code_dir: str, media_dir: str,
+                                   quality: str = None, max_retries: int = 3,
+                                   use_visual_fix_code: bool = True, visual_self_reflection_func=None,
+                                   banned_reasonings=None, scene_trace_id=None, topic=None,
+                                   session_id=None, code_generator=None,
+                                   scene_implementation=None, description=None,
+                                   scene_outline=None) -> tuple:
+        """Two-pass workflow: Preview pass for validation, then final pass for production.
+        
+        Pass 1: Preview (frame-only) - Fast rendering for code validation and visual checks
+        Pass 2: Final (full movie) - High quality rendering after scene is accepted
+        
+        Args:
+            Same as render_scene_optimized, but uses_visual_fix_code defaults to True
+            
+        Returns:
+            Tuple of (final_code, error_message)
+        """
+        print(f"🎬 Starting Two-Pass Workflow for Scene {curr_scene}")
+        
+        # PASS 1: Preview Pass (Frame-Only)
+        print(f"🚀 Pass 1: Preview rendering (frame-only validation)")
+        
+        preview_code, preview_error = await self.render_scene_optimized(
+            code=code,
+            file_prefix=file_prefix,
+            curr_scene=curr_scene,
+            curr_version=curr_version,
+            code_dir=code_dir,
+            media_dir=media_dir,
+            quality='preview',  # Force preview quality for first pass
+            max_retries=max_retries,
+            use_visual_fix_code=use_visual_fix_code,
+            visual_self_reflection_func=visual_self_reflection_func,
+            banned_reasonings=banned_reasonings,
+            scene_trace_id=scene_trace_id,
+            topic=topic,
+            session_id=session_id,
+            code_generator=code_generator,
+            scene_implementation=scene_implementation,
+            description=description,
+            scene_outline=scene_outline
+        )
+        
+        if preview_error:
+            print(f"❌ Preview pass failed: {preview_error}")
+            return preview_code, preview_error
+        
+        print(f"✅ Pass 1 completed - Scene validated with preview rendering")
+        
+        # PASS 2: Final Pass (Full Movie)
+        print(f"🎥 Pass 2: Final rendering (full movie production)")
+        
+        final_code, final_error = await self.render_scene_optimized(
+            code=preview_code,  # Use the validated/fixed code from preview
+            file_prefix=file_prefix,
+            curr_scene=curr_scene,
+            curr_version=curr_version + 100,  # Different version to avoid conflicts
+            code_dir=code_dir,
+            media_dir=media_dir,
+            quality=quality or 'high',  # Use target quality for final pass
+            max_retries=max_retries,
+            use_visual_fix_code=False,  # Skip visual fix in final pass
+            visual_self_reflection_func=None,
+            banned_reasonings=banned_reasonings,
+            scene_trace_id=scene_trace_id,
+            topic=topic,
+            session_id=session_id,
+            code_generator=code_generator,
+            scene_implementation=scene_implementation,
+            description=description,
+            scene_outline=scene_outline
+        )
+        
+        if final_error:
+            print(f"❌ Final pass failed: {final_error}")
+            return final_code, final_error
+        
+        print(f"🎉 Two-Pass Workflow completed successfully for Scene {curr_scene}")
+        return final_code, None
+
     async def render_scene_optimized(self, code: str, file_prefix: str, curr_scene: int, 
                                    curr_version: int, code_dir: str, media_dir: str, 
                                    quality: str = None, max_retries: int = 3, 
@@ -143,11 +230,14 @@ class OptimizedVideoRenderer:
         # Optimize manim command for speed
         file_path = os.path.join(code_dir, f"{file_prefix}_scene{curr_scene}_v{curr_version}.py")
         
-        # Write optimized code file
-        await self._write_code_file_async(file_path, current_code)
+        # Determine if this is a preview pass (for visual fix or code debugging)
+        is_preview_pass = (use_visual_fix_code or quality == 'preview' or self.preview_mode)
         
-        # Build optimized manim command
-        manim_cmd = self._build_optimized_command(file_path, media_dir, quality)
+        # Write optimized code file with appropriate settings
+        await self._write_code_file_async(file_path, current_code, preview_mode=is_preview_pass)
+        
+        # Build optimized manim command with two-pass workflow support
+        manim_cmd = self._build_optimized_command(file_path, media_dir, quality, preview_mode=is_preview_pass)
         
         retries = 0
         while retries < max_retries:
@@ -216,10 +306,10 @@ class OptimizedVideoRenderer:
                             
                             # Update file path and write fixed code
                             file_path = os.path.join(code_dir, f"{file_prefix}_scene{curr_scene}_v{curr_version}.py")
-                            await self._write_code_file_async(file_path, current_code)
+                            await self._write_code_file_async(file_path, current_code, preview_mode=is_preview_pass)
                             
                             # Update manim command for new file
-                            manim_cmd = self._build_optimized_command(file_path, media_dir, quality)
+                            manim_cmd = self._build_optimized_command(file_path, media_dir, quality, preview_mode=is_preview_pass)
                             
                             # Log the fix
                             fix_log_path = os.path.join(code_dir, f"{file_prefix}_scene{curr_scene}_v{curr_version}_fix_log.txt")
@@ -238,8 +328,16 @@ class OptimizedVideoRenderer:
 
         return current_code, f"Failed after {max_retries} attempts"
 
-    def _build_optimized_command(self, file_path: str, media_dir: str, quality: str) -> List[str]:
-        """Build optimized manim command with performance flags."""
+    def _build_optimized_command(self, file_path: str, media_dir: str, quality: str, 
+                                preview_mode: bool = False) -> List[str]:
+        """Build optimized manim command with performance flags and two-pass workflow support.
+        
+        Args:
+            file_path: Path to the Python file to render
+            media_dir: Media output directory
+            quality: Quality preset to use
+            preview_mode: If True, render only last frame for quick preview
+        """
         quality_preset = self.quality_presets.get(quality, self.quality_presets['medium'])
         
         cmd = [
@@ -251,7 +349,7 @@ class OptimizedVideoRenderer:
             "--fps", str(quality_preset['fps'])
         ]
         
-        # Add caching option (only disable if needed)
+        # Add caching option (only disable if needed) 
         if not self.enable_caching:
             cmd.append("--disable_caching")
         
@@ -259,11 +357,17 @@ class OptimizedVideoRenderer:
         if self.use_gpu_acceleration:
             cmd.extend(["--renderer", "opengl"])
         
-        # Preview mode optimizations
-        if self.preview_mode or quality == 'preview':
+        # Two-pass workflow: Preview pass (frame-only) vs Final pass (full movie)
+        if preview_mode or self.preview_mode or quality == 'preview':
+            # Preview pass: Only render the last frame for quick checks
             cmd.extend([
                 "--save_last_frame",  # Only render final frame for quick preview
-                "--write_to_movie"    # Skip unnecessary file operations
+                # Do NOT add --write_to_movie for preview pass
+            ])
+        else:
+            # Final pass: Full movie rendering with target preset  
+            cmd.extend([
+                "--write_to_movie"  # Full video rendering
             ])
         
         return cmd
@@ -288,27 +392,155 @@ class OptimizedVideoRenderer:
             timeout=300  # 5 minute timeout
         )
 
-    async def _write_code_file_async(self, file_path: str, code: str):
-        """Asynchronously write code file."""
+    async def _write_code_file_async(self, file_path: str, code: str, preview_mode: bool = False):
+        """Asynchronously write code file with optimization hints.
+        
+        Args:
+            file_path: Path to write the code file
+            code: Code content to write
+            preview_mode: If True, apply preview-optimized settings
+        """
         os.makedirs(os.path.dirname(file_path), exist_ok=True)
         
         # Add optimization hints to the code
-        optimized_code = self._optimize_code_for_rendering(code)
+        optimized_code = self._optimize_code_for_rendering(code, preview_mode)
         
         with open(file_path, 'w', encoding='utf-8') as f:
             f.write(optimized_code)
 
-    def _optimize_code_for_rendering(self, code: str) -> str:
-        """Add optimization hints to Manim code."""
-        optimizations = [
-            "",
-            "# Manim rendering optimizations",
-            "from manim import config",
-            "config.frame_rate = 30  # Balanced frame rate",
-            "config.pixel_height = 720  # Optimized resolution",
-            "config.pixel_width = 1280",
-            ""
-        ]
+    def _inject_unified_tex_template(self, code: str) -> str:
+        """Inject a unified TeX template to maximize cache hits.
+        
+        This ensures consistent LaTeX preambles across scenes to improve
+        Manim's internal caching system.
+        
+        Args:
+            code: The Manim code to modify
+            
+        Returns:
+            Modified code with unified TeX template
+        """
+        # Standard unified TeX template for educational content
+        unified_template = '''
+# Unified TeX template for cache optimization
+from manim import TexTemplate
+
+unified_tex_template = TexTemplate()
+unified_tex_template.add_to_preamble(r"""
+\\usepackage{amsmath}
+\\usepackage{amssymb}
+\\usepackage{amsthm}
+\\usepackage{physics}
+\\usepackage{mathtools}
+\\usepackage{xcolor}
+\\usepackage{cancel}
+\\usepackage{siunitx}
+""")
+
+# Set as default template for all TeX objects
+config.tex_template = unified_tex_template
+'''
+        
+        # Find where to inject the template (after imports, before class definition)
+        lines = code.split('\n')
+        inject_position = 0
+        
+        # Look for the last import statement
+        for i, line in enumerate(lines):
+            if (line.strip().startswith(('from ', 'import ')) and 
+                not line.strip().startswith('#')):
+                inject_position = i + 1
+        
+        # If no imports found, look for class definition
+        if inject_position == 0:
+            for i, line in enumerate(lines):
+                if line.strip().startswith('class ') and ':' in line:
+                    inject_position = i
+                    break
+        
+        # Insert unified template
+        template_lines = unified_template.strip().split('\n')
+        lines[inject_position:inject_position] = [''] + template_lines + ['']
+        
+        return '\n'.join(lines)
+
+    def _apply_animation_speed_factor(self, code: str, speed_factor: float = 0.5) -> str:
+        """Apply speed factor to run_time values for preview acceleration.
+        
+        Args:
+            code: The Manim code to modify
+            speed_factor: Factor to multiply run_time values (0.5 = half time)
+        
+        Returns:
+            Modified code with scaled run_time values
+        """
+        if speed_factor >= 1.0:
+            return code  # No scaling needed
+            
+        # Regex pattern to find run_time parameters
+        run_time_pattern = r'run_time\s*=\s*([0-9.]+)'
+        
+        def scale_run_time(match):
+            original_time = float(match.group(1))
+            new_time = max(0.1, original_time * speed_factor)  # Minimum 0.1 seconds
+            return f'run_time={new_time}'
+        
+        # Apply scaling
+        scaled_code = re.sub(run_time_pattern, scale_run_time, code)
+        
+        # Also look for Wait() calls and scale them
+        wait_pattern = r'Wait\(([0-9.]+)\)'
+        
+        def scale_wait(match):
+            original_wait = float(match.group(1))
+            new_wait = max(0.1, original_wait * speed_factor)  # Minimum 0.1 seconds
+            return f'Wait({new_wait})'
+            
+        scaled_code = re.sub(wait_pattern, scale_wait, scaled_code)
+        
+        return scaled_code
+
+    def _optimize_code_for_rendering(self, code: str, preview_mode: bool = False) -> str:
+        """Add optimization hints to Manim code with dynamic settings based on mode.
+        
+        Args:
+            code: The original Manim code
+            preview_mode: If True, use preview-optimized settings
+        """
+        # Inject unified TeX template to maximize cache hits
+        # (unless this looks like it's already been processed)
+        if 'unified_tex_template' not in code:
+            code = self._inject_unified_tex_template(code)
+        
+        # Apply speed factor for preview mode to reduce render time
+        if preview_mode:
+            code = self._apply_animation_speed_factor(code, speed_factor=0.5)
+        
+        # Dynamic settings based on mode
+        if preview_mode:
+            # Preview settings: Keep decent resolution but optimize for speed
+            optimizations = [
+                "",
+                "# Manim preview optimizations",
+                "from manim import config",
+                "config.frame_rate = 24  # Standard educational frame rate",
+                "config.pixel_height = 540  # Preview quality",
+                "config.pixel_width = 960",
+                "# Prefer Text over MathTex for plain English in preview",
+                ""
+            ]
+        else:
+            # Production settings: Balanced performance
+            optimizations = [
+                "",
+                "# Manim rendering optimizations",
+                "from manim import config",
+                "config.frame_rate = 24  # Standard educational frame rate", 
+                "config.pixel_height = 720  # Balanced resolution",
+                "config.pixel_width = 1280",
+                "# Use Text for plain English; MathTex only for math",
+                ""
+            ]
         
         # Find the end of manim imports specifically
         lines = code.split('\n')
@@ -318,6 +550,7 @@ class OptimizedVideoRenderer:
             # Look for manim-related imports
             if (line.strip().startswith('from manim') or 
                 line.strip().startswith('import manim') or
+                line.strip().startswith('import manim_') or
                 line.strip().startswith('from manim_')):
                 manim_import_end = i + 1
         
@@ -349,16 +582,29 @@ class OptimizedVideoRenderer:
         )
 
     def _find_rendered_video(self, file_prefix: str, scene: int, version: int, media_dir: str) -> str:
-        """Find the rendered video file."""
+        """Find the rendered video file with dynamic quality detection.
+        
+        Uses regex for version selection to avoid edge cases and searches
+        quality folders in priority order.
+        """
         video_dir = os.path.join(media_dir, "videos", f"{file_prefix}_scene{scene}_v{version}")
         
-        # Look in quality-specific subdirectories
-        for quality_dir in ["1080p60", "720p30", "480p15"]:
+        # Look in quality-specific subdirectories with priority order
+        quality_dirs = ["1080p60", "1080p30", "720p30", "720p24", "480p24", "480p15"]
+        
+        for quality_dir in quality_dirs:
             search_dir = os.path.join(video_dir, quality_dir)
             if os.path.exists(search_dir):
+                # Use regex pattern to find video files and handle version selection
                 for file in os.listdir(search_dir):
-                    if file.endswith('.mp4'):
+                    if re.match(r'.*\.mp4$', file):
                         return os.path.join(search_dir, file)
+        
+        # Fallback: search all subdirectories for any MP4 file
+        for root, dirs, files in os.walk(video_dir):
+            for file in files:
+                if re.match(r'.*\.mp4$', file):
+                    return os.path.join(root, file)
         
         raise FileNotFoundError(f"No rendered video found for scene {scene} version {version}")
 
@@ -398,47 +644,117 @@ class OptimizedVideoRenderer:
 
     async def render_multiple_scenes_parallel(self, scene_configs: List[Dict], 
                                            max_concurrent: int = None) -> List[tuple]:
-        """Render multiple scenes in parallel with optimized resource management."""
+        """Render multiple scenes in parallel with optimized resource management.
+        
+        Features:
+        - Adaptive concurrency based on scene complexity
+        - Staggered starts to reduce disk/CPU spikes
+        - Enhanced error handling and progress reporting
+        """
         
         max_concurrent = max_concurrent or self.max_concurrent_renders
-        print(f"Starting parallel rendering of {len(scene_configs)} scenes (max concurrent: {max_concurrent})")
+        
+        # Adaptive concurrency: Detect heavy scenes (many MathTex/SVGMobject)
+        heavy_scenes = []
+        light_scenes = []
+        
+        for i, config in enumerate(scene_configs):
+            code = config.get('code', '')
+            # Check for heavy rendering patterns - use more precise matching
+            heavy_patterns = [r'MathTex\(', r'SVGMobject\(', r'(?<!\w)Tex\(', r'LaTeX', r'complex_animation']
+            
+            # Use regex for more precise pattern matching
+            import re
+            if any(re.search(pattern, code) for pattern in heavy_patterns):
+                heavy_scenes.append((i, config))
+            else:
+                light_scenes.append((i, config))
+        
+        if heavy_scenes:
+            print(f"🎯 Detected {len(heavy_scenes)} heavy scenes (MathTex/SVG-intensive)")
+            print(f"⚡ Found {len(light_scenes)} light scenes")
+            # Serialize heavy scenes to avoid resource conflicts
+            if len(heavy_scenes) > max_concurrent // 2:
+                max_concurrent = max(1, max_concurrent // 2)
+                print(f"🔧 Reduced concurrency to {max_concurrent} for heavy scenes")
+        
+        print(f"🚀 Starting parallel rendering of {len(scene_configs)} scenes (max concurrent: {max_concurrent})")
         
         semaphore = asyncio.Semaphore(max_concurrent)
         
-        async def render_single_scene(config):
+        async def render_single_scene_with_stagger(config, delay_seconds=0):
+            # Stagger starts to reduce disk/CPU spikes
+            if delay_seconds > 0:
+                await asyncio.sleep(delay_seconds)
+                
             async with semaphore:
                 return await self.render_scene_optimized(**config)
         
         start_time = time.time()
         
-        # Execute all renders concurrently
-        tasks = [render_single_scene(config) for config in scene_configs]
+        # Create tasks with staggered delays
+        tasks = []
+        for i, config in enumerate(scene_configs):
+            # Small stagger delay (0.1 seconds between starts)
+            stagger_delay = i * 0.1
+            task = render_single_scene_with_stagger(config, stagger_delay)
+            tasks.append(task)
+        
+        # Execute all renders concurrently with staggered starts
         results = await asyncio.gather(*tasks, return_exceptions=True)
         
         elapsed = time.time() - start_time
         successful = sum(1 for r in results if not isinstance(r, Exception) and r[1] is None)
         
-        print(f"Parallel rendering completed in {elapsed:.2f}s")
-        print(f"Success rate: {successful}/{len(scene_configs)} scenes")
-        print(f"Cache hit rate: {self.render_stats['cache_hits']}/{self.render_stats['total_renders']} ({self.render_stats['cache_hits']/max(1,self.render_stats['total_renders'])*100:.1f}%)")
+        print(f"✅ Parallel rendering completed in {elapsed:.2f}s")
+        print(f"📊 Success rate: {successful}/{len(scene_configs)} scenes")
+        
+        if self.render_stats['total_renders'] > 0:
+            cache_hit_rate = (self.render_stats['cache_hits'] / self.render_stats['total_renders']) * 100
+            print(f"🎯 Cache hit rate: {self.render_stats['cache_hits']}/{self.render_stats['total_renders']} ({cache_hit_rate:.1f}%)")
         
         return results
 
     async def _create_optimized_snapshot(self, topic: str, scene_number: int, 
                                        version_number: int) -> Image.Image:
-        """Create optimized snapshot with async processing."""
+        """Create optimized snapshot with dynamic quality detection.
+        
+        Searches for the first existing folder in ["1080p60","720p30","480p15"] 
+        instead of hardcoding 1080p60 to support different quality previews.
+        """
         file_prefix = re.sub(r'[^a-z0-9_]+', '_', topic.lower())
-        video_folder_path = os.path.join(
+        base_video_path = os.path.join(
             self.output_dir, file_prefix, "media", "videos", 
-            f"{file_prefix}_scene{scene_number}_v{version_number}", "1080p60"
+            f"{file_prefix}_scene{scene_number}_v{version_number}"
         )
         
-        # Find video file
-        video_files = [f for f in os.listdir(video_folder_path) if f.endswith('.mp4')]
-        if not video_files:
-            raise FileNotFoundError(f"No mp4 files found in {video_folder_path}")
+        # Search for video in quality folders dynamically - prefer higher quality first
+        quality_folders = ["1080p60", "1080p30", "720p30", "720p24", "480p24", "480p15"]
+        video_path = None
         
-        video_path = os.path.join(video_folder_path, video_files[0])
+        for quality_folder in quality_folders:
+            quality_path = os.path.join(base_video_path, quality_folder)
+            if os.path.exists(quality_path):
+                video_files = [f for f in os.listdir(quality_path) if f.endswith('.mp4')]
+                if video_files:
+                    video_path = os.path.join(quality_path, video_files[0])
+                    print(f"📸 Using {quality_folder} quality for snapshot")
+                    break
+        
+        if not video_path:
+            # Fallback: search all subdirectories for any MP4 file
+            for root, dirs, files in os.walk(base_video_path):
+                for file in files:
+                    if file.endswith('.mp4'):
+                        video_path = os.path.join(root, file)
+                        quality_detected = os.path.basename(root)
+                        print(f"📸 Found video in {quality_detected} quality folder")
+                        break
+                if video_path:
+                    break
+        
+        if not video_path:
+            raise FileNotFoundError(f"No mp4 files found in {base_video_path} or its subdirectories")
         
         # Create snapshot asynchronously
         return await asyncio.to_thread(
@@ -964,19 +1280,20 @@ class OptimizedVideoRenderer:
             print(f"📝 Created file list: {file_list_path}")
             print(f"🎬 Combining {len(scene_videos)} videos using direct FFmpeg...")
             
-            # Use direct FFmpeg command for maximum compatibility
+            # Use direct FFmpeg command with enhanced encoding settings
             cmd = [
                 'ffmpeg',
                 '-f', 'concat',
-                '-safe', '0',
+                '-safe', '0', 
                 '-i', file_list_path,
-                '-c:v', 'libx264',
-                '-c:a', 'aac',
-                '-preset', 'fast',
-                '-crf', '25',
-                '-pix_fmt', 'yuv420p',
-                '-movflags', '+faststart',
+                '-c:v', 'libx264',  # Standard codec for compatibility
+                '-c:a', 'aac',      # Standard audio codec
+                '-preset', 'medium',  # Balanced speed vs quality
+                '-crf', '23',       # Slightly better quality than 25
+                '-pix_fmt', 'yuv420p',  # Wide compatibility
+                '-movflags', '+faststart',  # Optimize for streaming
                 '-avoid_negative_ts', 'make_zero',
+                '-threads', '0',    # Use all available CPU threads
                 '-y',  # Overwrite output file
                 output_path
             ]

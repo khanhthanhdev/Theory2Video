@@ -36,7 +36,7 @@
       "context_learning_path": "data/context_learning",
       "embedding_model": "hf:ibm-granite/granite-embedding-30m-english",
       "provider": "openai",
-      "api_key": "AIzaSyBUCGQ_hDLAHQN-T1ycWBJV8SGfwusfEjg"
+      "api_key": "x"
     },
     "error": "No video output was generated. Check Manim execution logs.",
     "stack_trace": "Traceback (most recent call last):\n  File \"/home/thanhkt/CODE/Theory2Video/gradio_app.py\", line 291, in process_video_generation\n    raise Exception(\"No video output was generated. Check Manim execution logs.\")\nException: No video output was generated. Check Manim execution logs.\n"
@@ -78,7 +78,7 @@
       "context_learning_path": "data/context_learning",
       "embedding_model": "hf:ibm-granite/granite-embedding-30m-english",
       "provider": "openai",
-      "api_key": "AIzaSyBUCGQ_hDLAHQN-T1ycWBJV8SGfwusfEjg"
+      "api_key": "x"
     },
     "error": "No video output was generated. Check Manim execution logs.",
     "stack_trace": "Traceback (most recent call last):\n  File \"/home/thanhkt/CODE/Theory2Video/gradio_app.py\", line 291, in process_video_generation\n    raise Exception(\"No video output was generated. Check Manim execution logs.\")\nException: No video output was generated. Check Manim execution logs.\n"
@@ -120,7 +120,7 @@
       "context_learning_path": "data/context_learning",
       "embedding_model": "hf:ibm-granite/granite-embedding-30m-english",
       "provider": "gemini",
-      "api_key": "AIzaSyBUCGQ_hDLAHQN-T1ycWBJV8SGfwusfEjg"
+      "api_key": "x"
     },
     "error": "No video output was generated. Check Manim execution logs.",
     "stack_trace": "Traceback (most recent call last):\n  File \"/home/thanhkt/CODE/Theory2Video/gradio_app.py\", line 293, in process_video_generation\n    raise Exception(\"No video output was generated. Check Manim execution logs.\")\nException: No video output was generated. Check Manim execution logs.\n"
@@ -162,7 +162,7 @@
       "context_learning_path": "data/context_learning",
       "embedding_model": "hf:ibm-granite/granite-embedding-30m-english",
       "provider": "gemini",
-      "api_key": "AIzaSyBUCGQ_hDLAHQN-T1ycWBJV8SGfwusfEjg"
+      "api_key": "x"
     },
     "error": "No video output was generated. Check Manim execution logs.",
     "stack_trace": "Traceback (most recent call last):\n  File \"/home/thanhkt/CODE/Theory2Video/gradio_app.py\", line 293, in process_video_generation\n    raise Exception(\"No video output was generated. Check Manim execution logs.\")\nException: No video output was generated. Check Manim execution logs.\n"
@@ -204,7 +204,7 @@
       "context_learning_path": "data/context_learning",
       "embedding_model": "hf:ibm-granite/granite-embedding-30m-english",
       "provider": "gemini",
-      "api_key": "AIzaSyBUCGQ_hDLAHQN-T1ycWBJV8SGfwusfEjg"
+      "api_key": "x"
     },
     "error": "No video output was generated. Check Manim execution logs.",
     "stack_trace": "Traceback (most recent call last):\n  File \"/home/thanhkt/CODE/Theory2Video/gradio_app.py\", line 293, in process_video_generation\n    raise Exception(\"No video output was generated. Check Manim execution logs.\")\nException: No video output was generated. Check Manim execution logs.\n"
@@ -246,7 +246,7 @@
       "context_learning_path": "data/context_learning",
       "embedding_model": "hf:ibm-granite/granite-embedding-30m-english",
       "provider": "gemini",
-      "api_key": "AIzaSyBUCGQ_hDLAHQN-T1ycWBJV8SGfwusfEjg"
+      "api_key": "x"
     },
     "error": "'in <string>' requires string as left operand, not int",
     "stack_trace": "Traceback (most recent call last):\n  File \"/home/thanhkt/CODE/Theory2Video/gradio_app.py\", line 293, in process_video_generation\n    await video_generator.generate_video_pipeline(\n  File \"/home/thanhkt/CODE/Theory2Video/generate_video.py\", line 519, in generate_video_pipeline\n    implementation_plans = await self._generate_implementation_plans(\n                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/thanhkt/CODE/Theory2Video/generate_video.py\", line 628, in _generate_implementation_plans\n    missing_scenes = [\n                     ^\n  File \"/home/thanhkt/CODE/Theory2Video/generate_video.py\", line 630, in <listcomp>\n    if plan is None and (specific_scenes is None or scene_num in specific_scenes)\n                                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nTypeError: 'in <string>' requires string as left operand, not int\n"
@@ -288,11 +288,58 @@
       "context_learning_path": "data/context_learning",
       "embedding_model": "hf:ibm-granite/granite-embedding-30m-english",
       "provider": "gemini",
-      "api_key": "AIzaSyBUCGQ_hDLAHQN-T1ycWBJV8SGfwusfEjg"
+      "api_key": "x"
     },
     "output_file": "output/derivative/derivative_combined.mp4",
     "processing_time": 1086.523168,
     "thumbnail": "thumbnails/b21bf8e9-22db-4a2d-a615-98bffda65090.jpg",
     "scene_snapshots": []
+  },
+  "74d4a555-b558-421b-bf76-25218af35327": {
+    "id": "74d4a555-b558-421b-bf76-25218af35327",
+    "status": "completed",
+    "topic": "Gradient Descent",
+    "description": "Gradient descent is the backbone of the learning process for various algorithms, including linear regression, logistic regression, support vector machines, and neural networks which serves as a fundamental optimization technique to minimize the cost function of a model by iteratively adjusting the model parameters to reduce the difference between predicted and actual values, improving the model's performance",
+    "model": "gemini/gemini-2.5-pro",
+    "start_time": "2025-09-10T09:16:35.278342",
+    "progress": 100,
+    "message": "Video generation completed",
+    "params": {
+      "topic": "Gradient Descent",
+      "description": "Gradient descent is the backbone of the learning process for various algorithms, including linear regression, logistic regression, support vector machines, and neural networks which serves as a fundamental optimization technique to minimize the cost function of a model by iteratively adjusting the model parameters to reduce the difference between predicted and actual values, improving the model's performance",
+      "model": "gemini/gemini-2.5-pro",
+      "scene_model": "gemini/gemini-2.5-pro",
+      "helper_model": null,
+      "max_retries": 3,
+      "use_rag": false,
+      "use_visual_fix_code": true,
+      "temperature": 0.7,
+      "use_context_learning": false,
+      "verbose": true,
+      "use_langfuse": false,
+      "max_scene_concurrency": 5,
+      "max_topic_concurrency": 2,
+      "max_concurrent_renders": 4,
+      "quality": "medium",
+      "use_gpu_acceleration": false,
+      "preview_mode": false,
+      "enable_caching": true,
+      "only_plan": false,
+      "scenes": "",
+      "output_dir": "output",
+      "chroma_db_path": "data/rag/chroma_db",
+      "manim_docs_path": "data/rag/manim_docs",
+      "context_learning_path": "data/context_learning",
+      "embedding_model": "hf:ibm-granite/granite-embedding-30m-english",
+      "provider": "gemini",
+      "api_key": "AIzaSyCKUQCJb9jejUWhimOMdadLDHliZ93JiUI"
+    },
+    "stage": "completed",
+    "last_updated": "2025-09-10T09:32:14.036657",
+    "output_file": "output/gradient_descent/media/videos/gradient_descent_scene5_v3/720p24/partial_movie_files/Scene5/800574751_3924470929_1637378973.mp4",
+    "processing_time": 937.304814,
+    "thumbnail": "thumbnails/74d4a555-b558-421b-bf76-25218af35327.jpg",
+    "scene_snapshots": [],
+    "end_time": "2025-09-10T09:32:12.680926"
   }
 }

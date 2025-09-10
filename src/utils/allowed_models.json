@@ -7,7 +7,7 @@
     "gemini/gemini-2.5-flash",
     "bedrock/anthropic.claude-3-5-sonnet-20241022-v2:0",
     "bedrock/anthropic.claude-3-5-haiku-20241022-v1:0",
-    "bedrock/anthropic.claude-3-7-sonnet-20250219-v1:0",
+    "bedrock/apac.anthropic.claude-3-7-sonnet-20250219-v1:0",
     "bedrock/anthropic.claude-sonnet-4-20250514-v1:0",
     "bedrock/amazon.nova-lite-v1:0",
     "bedrock/amazon.nova-pro-v1:0"
