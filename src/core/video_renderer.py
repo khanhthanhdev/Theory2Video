@@ -13,6 +13,7 @@ import hashlib
 from pathlib import Path
 import shutil
 import tempfile
+import importlib.util
 
 try:
     import ffmpeg
@@ -213,7 +214,8 @@ class OptimizedVideoRenderer:
         
         start_time = time.time()
         quality = quality or self.default_quality
-        current_code = code
+        # Sanitize imports to avoid heavy or missing plugin imports before first render
+        current_code = self._sanitize_imports_in_code(code)
         
         # Check cache first
         cached_video = self._is_cached(current_code, quality)
@@ -240,6 +242,7 @@ class OptimizedVideoRenderer:
         manim_cmd = self._build_optimized_command(file_path, media_dir, quality, preview_mode=is_preview_pass)
         
         retries = 0
+        prev_error_sig = None
         while retries < max_retries:
             try:
                 print(f"🎬 Rendering scene {curr_scene} (quality: {quality}, attempt: {retries + 1})")
@@ -284,6 +287,13 @@ class OptimizedVideoRenderer:
                 # Save error log
                 error_log_path = os.path.join(code_dir, f"{file_prefix}_scene{curr_scene}_v{curr_version}_error_{retries}.log")
                 await self._write_error_log_async(error_log_path, str(e), retries)
+
+                # If error signature is same as previous, avoid repeating identical fixes
+                error_sig = self._normalize_error_signature(str(e))
+                if prev_error_sig is not None and error_sig == prev_error_sig:
+                    print("⚠️ Repeated identical error detected; stopping retries early to save tokens.")
+                    return current_code, str(e)
+                prev_error_sig = error_sig
                 
                 # Instead of blind retry, try to fix the code if we have a code generator
                 if code_generator and scene_implementation and retries < max_retries - 1:
@@ -296,7 +306,9 @@ class OptimizedVideoRenderer:
                             scene_trace_id=scene_trace_id,
                             topic=topic,
                             scene_number=curr_scene,
-                            session_id=session_id
+                            session_id=session_id,
+                            minimal_context=True,  # reduce token usage
+                            context_lines=60
                         )
                         
                         if fixed_code and fixed_code != current_code:
@@ -306,11 +318,13 @@ class OptimizedVideoRenderer:
                             
                             # Update file path and write fixed code
                             file_path = os.path.join(code_dir, f"{file_prefix}_scene{curr_scene}_v{curr_version}.py")
+                            # Sanitize imports again after AI fix
+                            current_code = self._sanitize_imports_in_code(current_code)
                             await self._write_code_file_async(file_path, current_code, preview_mode=is_preview_pass)
                             
                             # Update manim command for new file
                             manim_cmd = self._build_optimized_command(file_path, media_dir, quality, preview_mode=is_preview_pass)
-                            
+                        
                             # Log the fix
                             fix_log_path = os.path.join(code_dir, f"{file_prefix}_scene{curr_scene}_v{curr_version}_fix_log.txt")
                             await self._write_error_log_async(fix_log_path, fix_log or "Code fix applied", 0)
@@ -641,6 +655,49 @@ config.tex_template = unified_tex_template
         print(f"Visual fix code saved to scene{scene}/code/{file_prefix}_scene{scene}_v{new_version}.py")
         
         return new_code
+
+    def _sanitize_imports_in_code(self, code: str) -> str:
+        """Remove plugin imports that are not installed and deduplicate imports.
+
+        This prevents ImportError and reduces overhead from wildcard imports.
+        """
+        lines = code.splitlines()
+        plugin_modules = [
+            'manim_circuit',
+            'manim_physics',
+            'manim_chemistry',
+            'manim_dsa',
+            'manim_ml',
+        ]
+        # Determine which modules are available
+        available = {mod: (importlib.util.find_spec(mod) is not None) for mod in plugin_modules}
+
+        sanitized: List[str] = []
+        seen_imports = set()
+        for line in lines:
+            stripped = line.strip()
+            # Skip missing plugin imports
+            if stripped.startswith('from ') or stripped.startswith('import '):
+                for mod, ok in available.items():
+                    if mod in stripped and not ok:
+                        # Drop this import line
+                        break
+                else:
+                    # Deduplicate exact import lines
+                    if stripped not in seen_imports:
+                        sanitized.append(line)
+                        seen_imports.add(stripped)
+                continue
+            sanitized.append(line)
+        return "\n".join(sanitized)
+
+    def _normalize_error_signature(self, error: str) -> str:
+        """Normalize error text to detect repeated failures regardless of versioned filenames."""
+        # Remove versioned file references to avoid false mismatches
+        sig = re.sub(r'_scene\d+_v\d+\.py', '_sceneX_vY.py', error)
+        # Trim to last 5 lines which usually contain the core exception
+        parts = sig.strip().splitlines()
+        return "\n".join(parts[-6:])
 
     async def render_multiple_scenes_parallel(self, scene_configs: List[Dict], 
                                            max_concurrent: int = None) -> List[tuple]:

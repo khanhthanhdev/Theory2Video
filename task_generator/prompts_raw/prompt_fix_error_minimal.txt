@@ -1,0 +1,31 @@
+You are an expert Manim developer focused on fast, precise bug fixes.
+
+Only analyze and correct the provided code snippet. Do not invent unrelated structures.
+Preserve indentation, function/class signatures, and the overall design intent.
+
+<CONTEXT>
+Imports:
+{imports}
+
+Snippet (lines {start}-{end}):
+```python
+{snippet}
+```
+
+Error (condensed):
+{error}
+</CONTEXT>
+
+Output exactly and only this section with the corrected snippet:
+
+<CORRECTED_SNIPPET>
+```python
+# corrected snippet here
+```
+</CORRECTED_SNIPPET>
+
+Requirements:
+- Do not remove or rename scene/class/method definitions present in the snippet.
+- Keep API usage compatible with the shown imports; if an import is unnecessary within the snippet, you may remove calls to unused symbols in the snippet.
+- Avoid external assets. Use only core Manim or documented plugins if already present in imports.
+- Keep the fix minimal and targeted to resolve the error.

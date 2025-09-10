@@ -8,8 +8,7 @@ from typing import Union, List, Dict, Optional, Tuple, Any
 from PIL import Image
 
 from src.utils.utils import extract_json
-from mllm_tools.utils import _prepare_text_inputs, _extract_code, _prepare_text_image_inputs
-from mllm_tools.gemini import GeminiWrapper
+from mllm_tools.utils import _prepare_text_inputs, prepare_media_messages
 from task_generator import (
     get_prompt_code_generation,
     get_prompt_fix_error,
@@ -52,7 +51,7 @@ class CodeGenerator:
         context_learning_path: str = "data/context_learning", 
         chroma_db_path: str = "rag/chroma_db", 
         manim_docs_path: str = "rag/manim_docs", 
-        embedding_model: str = "azure/text-embedding-3-large", 
+        embedding_model: str = "hf:ibm-granite/granite-embedding-30m-english", 
         use_visual_fix_code: bool = False, 
         use_langfuse: bool = True, 
         session_id: Optional[str] = None
@@ -187,22 +186,18 @@ class CodeGenerator:
         except (IOError, TypeError) as e:
             logger.error(f"Failed to save queries to cache {cache_file}: {e}")
 
-    def _extract_json_from_response(self, response: str, error_context: str = "") -> List[str]:
-        """Extract and parse JSON from model response with improved error handling."""
-        # Try to extract JSON from code blocks first
-        json_match = re.search(JSON_PATTERN, response, re.DOTALL)
-        if json_match:
-            json_text = json_match.group(1).strip()
-        else:
-            # Fallback: clean the response and try direct parsing
-            json_text = response.replace("```json", "").replace("```", "").strip()
-        
+    def _extract_json_from_response(self, response: str, error_context: str = "") -> List[Dict[str, Any]]:
+        """Extract JSON using shared utility with robust fallbacks."""
         try:
-            return json.loads(json_text)
-        except json.JSONDecodeError as e:
-            logger.error(f"JSONDecodeError when parsing {error_context}: {e}")
-            logger.error(f"Response text was: {response[:500]}...")
-            return []
+            parsed = extract_json(response)
+            if isinstance(parsed, list):
+                return parsed  # expected list of dicts
+            # Some models return object with key
+            if isinstance(parsed, dict) and 'queries' in parsed and isinstance(parsed['queries'], list):
+                return parsed['queries']
+        except Exception as e:
+            logger.error(f"Failed to parse JSON for {error_context}: {e}")
+        return []
 
     def _generate_rag_queries_code(
         self, 
@@ -542,7 +537,9 @@ class CodeGenerator:
         topic: str, 
         scene_number: int, 
         session_id: str, 
-        rag_queries_cache: Optional[Dict] = None
+        rag_queries_cache: Optional[Dict] = None,
+        minimal_context: bool = True,
+        context_lines: int = 60
     ) -> Tuple[str, str]:
         """Fix errors in generated Manim code.
 
@@ -563,6 +560,55 @@ class CodeGenerator:
             ValueError: If code fixing fails
         """
         try:
+            # If minimal context mode, try snippet-level fix first to reduce tokens
+            if minimal_context:
+                snippet_info = self._extract_error_snippet(code, error, context_lines=context_lines)
+                if snippet_info:
+                    imports_header, start_line, end_line, snippet = snippet_info
+                    minimal_prompt_path = Path('task_generator/prompts_raw/prompt_fix_error_minimal.txt')
+                    if minimal_prompt_path.exists():
+                        with minimal_prompt_path.open('r', encoding=CACHE_FILE_ENCODING) as f:
+                            minimal_template = f.read()
+                    else:
+                        # Fallback inline template
+                        minimal_template = (
+                            "You are a precise Manim bug fixer.\n"
+                            "Only correct the provided snippet. Keep signatures and indentation.\n"
+                            "Return only the corrected snippet between <CORRECTED_SNIPPET> tags as ```python fenced code.\n\n"
+                            "<CONTEXT>\n"
+                            f"Imports:\n{{imports}}\n\n"
+                            f"Snippet (lines {{start}}-{{end}}):\n```python\n{{snippet}}\n```\n\n"
+                            f"Error (condensed):\n{{error}}\n"
+                            "</CONTEXT>\n\n"
+                            "<CORRECTED_SNIPPET>\n```python\n# corrected snippet here\n```\n</CORRECTED_SNIPPET>\n"
+                        )
+
+                    condensed_error = self._condense_error(error)
+                    prompt = minimal_template.format(
+                        imports=imports_header,
+                        snippet=snippet,
+                        start=start_line,
+                        end=end_line,
+                        error=condensed_error
+                    )
+
+                    response_text = self.scene_model(
+                        _prepare_text_inputs(prompt),
+                        metadata={
+                            "generation_name": "code_fix_error_minimal", 
+                            "trace_id": scene_trace_id, 
+                            "tags": [topic, f"scene{scene_number}", "minimal"], 
+                            "session_id": session_id
+                        }
+                    )
+
+                    corrected_snippet = self._extract_corrected_snippet(response_text)
+                    if corrected_snippet:
+                        fixed_code = self._apply_snippet_patch(code, start_line, end_line, corrected_snippet)
+                        logger.info(f"Successfully patched code via minimal context for {topic} scene {scene_number}")
+                        return fixed_code, response_text
+                    # If we couldn't parse a corrected snippet, fall through to full fix
+
             # Start with base error fix prompt
             additional_context = None
             
@@ -626,6 +672,82 @@ class CodeGenerator:
             logger.error(f"Error fixing code for {topic} scene {scene_number}: {e}")
             raise ValueError(f"Code error fixing failed: {e}") from e
 
+    # -------------------- Minimal-context helpers --------------------
+
+    def _condense_error(self, error: str) -> str:
+        """Reduce error to the most informative lines (last traceback line + message)."""
+        if not error:
+            return ""
+        # Grab last few lines
+        lines = error.strip().splitlines()
+        tail = lines[-6:]
+        return "\n".join(tail)
+
+    def _extract_error_snippet(self, code: str, error: str, context_lines: int = 60) -> Optional[Tuple[str, int, int, str]]:
+        """Extract imports header and a code snippet around the error line.
+
+        Returns: (imports_header, start_line, end_line, snippet) or None
+        """
+        line_no = self._parse_error_line_number(error)
+        if line_no is None:
+            return None
+        lines = code.splitlines()
+        start = max(1, line_no - context_lines)
+        end = min(len(lines), line_no + context_lines)
+        snippet = "\n".join(lines[start-1:end])
+        imports_header = self._collect_import_header(lines)
+        return imports_header, start, end, snippet
+
+    def _parse_error_line_number(self, error: str) -> Optional[int]:
+        """Parse a Python traceback to find the line number in our generated file."""
+        # Matches: File "..._sceneX_vY.py", line N, in ...
+        match = re.search(r'File \"[^\"]*_scene\d+_v\d+\.py\", line (\d+)', error)
+        if match:
+            try:
+                return int(match.group(1))
+            except ValueError:
+                return None
+        # Generic fallback: any "line N" pattern
+        match = re.search(r'line (\d+)', error)
+        if match:
+            try:
+                return int(match.group(1))
+            except ValueError:
+                return None
+        return None
+
+    def _collect_import_header(self, lines: List[str], max_lines: int = 80) -> str:
+        """Collect initial import block to provide context without full code."""
+        header_lines: List[str] = []
+        for i, line in enumerate(lines[:max_lines]):
+            if line.strip().startswith(('import ', 'from ')) or line.strip().startswith('#'):
+                header_lines.append(line)
+            else:
+                # Stop when we hit first non-comment, non-import after at least one import
+                if header_lines:
+                    break
+        return "\n".join(header_lines[:max_lines])
+
+    def _extract_corrected_snippet(self, response_text: str) -> Optional[str]:
+        """Extract corrected snippet from <CORRECTED_SNIPPET> fenced block."""
+        # Prefer explicit tags if present
+        tag_match = re.search(r'<CORRECTED_SNIPPET>.*?```python\s*(.*?)\s*```.*?</CORRECTED_SNIPPET>', response_text, re.DOTALL)
+        if tag_match:
+            return tag_match.group(1).strip()
+        # Fallback: any python fenced code
+        code_match = re.search(CODE_PATTERN, response_text, re.DOTALL)
+        if code_match:
+            return code_match.group(1).strip()
+        return None
+
+    def _apply_snippet_patch(self, original_code: str, start_line: int, end_line: int, new_snippet: str) -> str:
+        """Replace lines [start_line, end_line] (1-based, inclusive) with new_snippet."""
+        lines = original_code.splitlines()
+        before = lines[:start_line-1]
+        after = lines[end_line:]
+        new_lines = new_snippet.splitlines()
+        return "\n".join(before + new_lines + after)
+
     def visual_self_reflection(
         self, 
         code: str, 
@@ -681,22 +803,9 @@ class CodeGenerator:
             prompt = prompt_template.format(code=code)
             
             # Prepare input based on media type and model capabilities
-            if is_video and getattr(self.scene_model, 'model_name', '').startswith('gemini/'):
-                # For video with Gemini models
-                messages = [
-                    {"type": "text", "content": prompt},
-                    {"type": "video", "content": str(media_path)}
-                ]
-            else:
-                # For images or non-Gemini models
-                if isinstance(media_path, str):
-                    media = Image.open(media_path)
-                else:
-                    media = media_path
-                messages = [
-                    {"type": "text", "content": prompt},
-                    {"type": "image", "content": media}
-                ]
+            # Use shared util to prepare media messages safely (handles mp4 vs image)
+            model_name = getattr(self.scene_model, 'model_name', '') or ''
+            messages = prepare_media_messages(prompt, media_path, model_name)
             
             # Get model response
             response_text = self.scene_model(
@@ -787,22 +896,8 @@ class CodeGenerator:
             )
             
             # Prepare input based on media type and model capabilities
-            if is_video and getattr(self.scene_model, 'model_name', '').startswith('gemini/'):
-                # For video with Gemini/Vertex AI models
-                messages = [
-                    {"type": "text", "content": prompt},
-                    {"type": "video", "content": str(media_path)}
-                ]
-            else:
-                # For images or non-Gemini models
-                if isinstance(media_path, str):
-                    media = Image.open(media_path)
-                else:
-                    media = media_path
-                messages = [
-                    {"type": "text", "content": prompt},
-                    {"type": "image", "content": media}
-                ]
+            model_name = getattr(self.scene_model, 'model_name', '') or ''
+            messages = prepare_media_messages(prompt, media_path, model_name)
             
             # Get enhanced VLM analysis response
             response_text = self.scene_model(
