@@ -1,0 +1,4 @@
+app.stemfun.studio {
+    encode zstd gzip
+    reverse_proxy app:7860
+}
