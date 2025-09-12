@@ -68,7 +68,7 @@ ENV PYTHONPATH="/app:$PYTHONPATH"
 RUN echo "export PYTHONPATH=/app:\$PYTHONPATH" >> ~/.bashrc
 
 # Run embedding creation script at build time
-RUN python create_embeddings.py
+
 
 # Ensure all files are writable (fix PermissionError for log file)
 RUN chmod -R a+w /app
