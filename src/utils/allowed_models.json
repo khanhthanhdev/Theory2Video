@@ -12,7 +12,7 @@
     "bedrock/amazon.nova-lite-v1:0",
     "bedrock/amazon.nova-pro-v1:0"
   ],
-  "default_model": "gemini/gemini-2.5-pro",
+  "default_model": "openai/gpt-4o",
   "providers": {
     "openai": {
       "display_name": "OpenAI",
@@ -44,8 +44,8 @@
     "openai/gpt-4o": "Reliable, multimodal, strong reasoning",
     "openai/o3": "Reasoning-optimized model",
     "openai/o3-mini": "Faster, cheaper reasoning variant",
-    "gemini/gemini-2.5-pro": "High quality, complex tasks",
-    "gemini/gemini-2.5-flash": "Fast, good for prototyping",
+    "gemini/gemini-1.5-pro": "High quality, complex tasks",
+    "gemini/gemini-1.5-flash": "Fast, good for prototyping",
     "bedrock/anthropic.claude-3-5-sonnet-20241022-v2:0": "Claude Sonnet on Bedrock",
     "bedrock/amazon.nova-lite-v1:0": "Amazon Nova Lite on Bedrock"
   },

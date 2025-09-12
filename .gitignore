@@ -87,3 +87,5 @@ __docker_build_cache__/
 
 # Ignore Miniconda
 /opt/conda/
+
+live_test_outputs

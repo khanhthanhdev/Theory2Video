@@ -97,6 +97,20 @@ class LiteLLMWrapper:
         metadata["trace_name"] = f"litellm-completion-{self.model_name}"
         # Convert messages to LiteLLM format
         formatted_messages = []
+        # Determine JSON response enforcement from metadata
+        response_format = None
+        if metadata.get("response_format_json"):
+            # Only apply for OpenAI-compatible models
+            try:
+                if (
+                    "openai" in self.model_name
+                    or "gpt" in self.model_name
+                    or self.model_name.startswith("openai/")
+                    or re.match(r"^o\d+.*$", self.model_name)
+                ):
+                    response_format = {"type": "json_object"}
+            except Exception:
+                pass
         for msg in messages:
             if msg["type"] == "text":
                 formatted_messages.append({
@@ -162,6 +176,7 @@ class LiteLLMWrapper:
                     temperature=self.temperature,
                     reasoning_effort=self.reasoning_effort,
                     metadata=metadata,
+                    response_format=response_format,
                     max_retries=99
                 )
             else:
@@ -170,15 +185,20 @@ class LiteLLMWrapper:
                     messages=formatted_messages,
                     temperature=self.temperature,
                     metadata=metadata,
+                    response_format=response_format,
                     max_retries=99
                 )
             if self.print_cost:
-                # pass your response from completion to completion_cost
-                cost = completion_cost(completion_response=response)
-                formatted_string = f"Cost: ${float(cost):.10f}"
-                # print(formatted_string)
-                self.accumulated_cost += cost
-                print(f"Accumulated Cost: ${self.accumulated_cost:.10f}")
+                # Try to compute cost; skip silently if model isn't mapped in LiteLLM pricing
+                try:
+                    cost = completion_cost(completion_response=response)
+                    formatted_string = f"Cost: ${float(cost):.10f}"
+                    # print(formatted_string)
+                    self.accumulated_cost += cost
+                    print(f"Accumulated Cost: ${self.accumulated_cost:.10f}")
+                except Exception as cost_err:
+                    if self.verbose:
+                        print(f"Skipping cost calculation: {cost_err}")
                 
             content = response.choices[0].message.content
             if content is None:

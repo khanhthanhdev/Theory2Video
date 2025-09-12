@@ -280,6 +280,19 @@ class OptimizedVideoRenderer:
             'MANIM_RENDERER_TIMEOUT': '300'  # 5 minute timeout
         })
         
+        # Ensure PYTHONPATH includes the project root so imports like `from src...` work
+        try:
+            repo_root = self._detect_project_root(file_path)
+            if repo_root:
+                existing = env.get('PYTHONPATH', '')
+                # Prepend repo_root if not already present
+                pathsep = os.pathsep
+                paths = [p for p in existing.split(pathsep) if p]
+                if repo_root not in paths:
+                    env['PYTHONPATH'] = repo_root + (pathsep + existing if existing else '')
+        except Exception as e:
+            print(f"Warning: Could not set PYTHONPATH automatically: {e}")
+
         return subprocess.run(
             cmd,
             capture_output=True,
@@ -287,6 +300,28 @@ class OptimizedVideoRenderer:
             env=env,
             timeout=300  # 5 minute timeout
         )
+
+    def _detect_project_root(self, file_path: str) -> Optional[str]:
+        """Detect the repository root to add to PYTHONPATH, by locating a directory that contains 'src'.
+
+        Priority:
+        1) Current working directory if it has 'src'
+        2) Walk up from the code file's directory until a 'src' directory is found
+        3) Fallback to current working directory
+        """
+        try:
+            cwd = os.getcwd()
+            if os.path.isdir(os.path.join(cwd, 'src')):
+                return cwd
+
+            # Walk up from the code file directory
+            p = Path(file_path).resolve().parent
+            for parent in [p] + list(p.parents):
+                if os.path.isdir(os.path.join(str(parent), 'src')):
+                    return str(parent)
+        except Exception:
+            pass
+        return os.getcwd()
 
     async def _write_code_file_async(self, file_path: str, code: str):
         """Asynchronously write code file."""

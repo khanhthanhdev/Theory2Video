@@ -32,7 +32,8 @@ DEFAULT_MAX_RETRIES = 10
 DEFAULT_RAG_K_VALUE = 2
 CACHE_FILE_ENCODING = 'utf-8'
 # Make patterns non-greedy and tolerant of whitespace to avoid over-capturing
-CODE_PATTERN = r"```python\s*(.*?)\s*```"
+# Accept ```python, ```py, or bare ``` fences
+CODE_PATTERN = r"```(?:python|py)?\s*(.*?)\s*```"
 JSON_PATTERN = r'```json\s*(.*?)\s*```'
 
 # Set up logging

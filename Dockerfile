@@ -8,16 +8,14 @@ WORKDIR /app
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     PYTHONPATH=/app:/app/src \
-    GRADIO_SERVER_NAME=0.0.0.0 \
-    GRADIO_SERVER_PORT=7860 \
     HF_HOME=/app/.cache/huggingface \
     HF_HUB_CACHE=/app/.cache/huggingface/hub \
     TRANSFORMERS_CACHE=/app/.cache/transformers \
     SENTENCE_TRANSFORMERS_HOME=/app/.cache/sentence_transformers \
     PATH="/root/.TinyTeX/bin/x86_64-linux:$PATH" \
-    GRADIO_ALLOW_FLAGGING=never \
-    GRADIO_ANALYTICS_ENABLED=False \
-    HF_HUB_DISABLE_TELEMETRY=1
+    HF_HUB_DISABLE_TELEMETRY=1 \
+    STREAMLIT_BROWSER_GATHER_USAGE_STATS=false \
+    STREAMLIT_SERVER_HEADLESS=true
 
 # Install system dependencies in single layer
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -46,7 +44,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir  torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu \
     && pip install --no-cache-dir  -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cpu \
-    && python -c "import gradio; print(f'Gradio version: {gradio.__version__}')" \
+    && python -c "import streamlit; print(f'Streamlit version: {streamlit.__version__}')" \
     && find /usr/local -name "*.pyc" -delete \
     && find /usr/local -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
 
@@ -94,12 +92,13 @@ LABEL space.title="Text 2 Mnaim" \
       space.author="khanhthanhdev" \
       space.description="Text to science video using multi Agent"
 
-# Expose the port that HF Spaces expects
+# Expose the default port (HF Spaces sets $PORT, default 7860)
 EXPOSE 7860
 
-# Health check optimized for HF Spaces
+# Health check for Streamlit app
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=2 \
-    CMD curl -f http://localhost:7860/ || exit 1
+    CMD curl -f http://localhost:${PORT:-7860}/ || exit 1
 
-# Run the Gradio app with HF Spaces optimized settings
-CMD ["python", "gradio_app.py"]
+# Run the Streamlit app
+# Use $PORT if provided by the platform, default to 7860
+CMD ["sh", "-c", "streamlit run streamlit_app.py --server.port ${PORT:-7860} --server.address 0.0.0.0 --server.headless true"]

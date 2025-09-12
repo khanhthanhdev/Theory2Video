@@ -1,5 +1,6 @@
 import json
 import re
+import os
 try:
     from pylatexenc.latexencode import utf8tolatex, UnicodeToLatexEncoder
 except:
@@ -45,38 +46,136 @@ def _extract_code(response_text: str) -> str:
         code = response_text
     return code 
 
-def extract_json(response: str) -> dict:
+def extract_json(response: str):
     """Extract and parse JSON content from a text response.
 
-    Attempts to parse the response as JSON directly, then tries to extract JSON from code blocks
-    if direct parsing fails.
+    Strategy (best-effort, robust):
+    1) Try json.loads on the whole response.
+    2) Try ```json fenced block.
+    3) Try generic ``` fenced block.
+    4) Try to locate the first JSON object/array substring by bracket matching and parse that.
+
+    Returns dict or list on success; [] on failure (backward compatible falsy value).
+    """
+    def _try_load(s: str):
+        try:
+            return json.loads(s)
+        except Exception:
+            return None
+
+    # 1) Direct
+    data = _try_load(response)
+    if data is not None:
+        return data
+
+    # 2) ```json fenced
+    match = re.search(r'```json\s*\n(.*?)\n```', response, re.DOTALL)
+    if match:
+        data = _try_load(match.group(1))
+        if data is not None:
+            return data
+
+    # 3) generic fenced
+    match = re.search(r'```\s*\n(.*?)\n```', response, re.DOTALL)
+    if match:
+        data = _try_load(match.group(1))
+        if data is not None:
+            return data
+
+    # 4) Bracket matching for object or array
+    def _extract_first_json_substring(s: str) -> str:
+        # Find first '{' or '[' and try to capture matching close using a simple stack
+        start = None
+        opener = None
+        for i, ch in enumerate(s):
+            if ch == '{' or ch == '[':
+                start = i
+                opener = ch
+                break
+        if start is None:
+            return None
+        closer = '}' if opener == '{' else ']'
+        depth = 0
+        in_str = False
+        escape = False
+        for j in range(start, len(s)):
+            c = s[j]
+            if in_str:
+                if escape:
+                    escape = False
+                elif c == '\\':
+                    escape = True
+                elif c == '"':
+                    in_str = False
+            else:
+                if c == '"':
+                    in_str = True
+                elif c == opener:
+                    depth += 1
+                elif c == closer:
+                    depth -= 1
+                    if depth == 0:
+                        return s[start:j+1]
+        return None
+
+    candidate = _extract_first_json_substring(response)
+    if candidate:
+        data = _try_load(candidate)
+        if data is not None:
+            return data
+
+    if os.environ.get("T2V_DEBUG_JSON") == "1":
+        print("Warning: Failed to extract valid JSON content from response (showing first 200 chars):", response[:200])
+    return []
+
+def parse_batched_scenes(response_text: str, key_field: str, expected_scene_order=None):
+    """Parse batched per-scene outputs from a single LLM response.
+
+    - Tries to parse strict JSON with shape {"scenes": [{"scene_number": int, key_field: str}, ...]}
+    - Accepts aliases for scene id: scene_number | scene | n
+    - If JSON parse fails, falls back to regex tag extraction for known plan tags and
+      aligns blocks with expected_scene_order if provided.
 
     Args:
-        response (str): The text response containing JSON content
+        response_text: Raw LLM response
+        key_field: One of 'vision_storyboard', 'technical_implementation', 'animation_narration'
+        expected_scene_order: Optional list of scene numbers indicating intended order
 
     Returns:
-        dict: The parsed JSON content as a dictionary, or empty list if parsing fails
-
-    Note:
-        Will attempt to parse content between ```json markers first, then between generic ``` markers
+        Dict[int, str]: Mapping from scene_number -> content
     """
-    try:
-        evaluation_json = json.loads(response)
-    except json.JSONDecodeError:
-        # If JSON parsing fails, try to extract the content between ```json and ```
-        match = re.search(r'```json\n(.*?)\n```', response, re.DOTALL)
-        if not match:
-            # If no match for ```json, try to extract content between ``` and ```
-            match = re.search(r'```\n(.*?)\n```', response, re.DOTALL)
-        
-        if match:
-            evaluation_content = match.group(1)
-            evaluation_json = json.loads(evaluation_content)
-        else:
-            # return empty list
-            evaluation_json = []
-            print(f"Warning: Failed to extract valid JSON content from {response}")
-    return evaluation_json
+    mapping = {}
+    data = extract_json(response_text)
+    if isinstance(data, dict) and isinstance(data.get('scenes'), list):
+        for item in data['scenes']:
+            sn = item.get('scene_number') or item.get('scene') or item.get('n')
+            content = item.get(key_field)
+            if isinstance(sn, int) and isinstance(content, str) and content.strip():
+                mapping[sn] = content
+    if mapping:
+        return mapping
+
+    # Fallback to tag-based extraction
+    tag_patterns = {
+        'vision_storyboard': r'(<SCENE_VISION_STORYBOARD_PLAN>.*?</SCENE_VISION_STORYBOARD_PLAN>)',
+        'technical_implementation': r'(<SCENE_TECHNICAL_IMPLEMENTATION_PLAN>.*?</SCENE_TECHNICAL_IMPLEMENTATION_PLAN>)',
+        'animation_narration': r'(<SCENE_ANIMATION_NARRATION_PLAN>.*?</SCENE_ANIMATION_NARRATION_PLAN>)'
+    }
+    pattern = tag_patterns.get(key_field)
+    if pattern:
+        blocks = re.findall(pattern, response_text, re.DOTALL)
+        if blocks:
+            if os.environ.get("T2V_DEBUG_JSON") == "1":
+                print(f"Info: Tag-based fallback extracted {len(blocks)} blocks for {key_field}")
+            if expected_scene_order:
+                for idx, sn in enumerate(expected_scene_order):
+                    if idx < len(blocks):
+                        mapping[sn] = blocks[idx]
+            else:
+                # Assign sequentially starting from 1
+                for i, block in enumerate(blocks, start=1):
+                    mapping[i] = block
+    return mapping
 
 def _fix_unicode_to_latex(text: str, parse_unicode: bool = True) -> str:
     """Convert Unicode symbols to LaTeX source code.

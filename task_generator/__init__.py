@@ -24,6 +24,7 @@ from .prompts_raw import (
     _prompt_rag_query_generation_fix_error
 )
 from typing import Union, List
+import json
   
 def get_prompt_scene_plan(topic: str, description: str) -> str:
     """
@@ -77,6 +78,161 @@ def get_prompt_scene_animation_narration(scene_number: int, topic: str, descript
         technical_implementation_plan=technical_implementation_plan,
         relevant_plugins=", ".join(relevant_plugins)
     )
+    return prompt
+
+# -----------------------------
+# Batched prompt builders
+# -----------------------------
+
+def get_prompt_scene_vision_storyboard_batch(topic: str,
+                                             description: str,
+                                             scene_outline: str,
+                                             scene_numbers: List[int],
+                                             relevant_plugins: List[str]) -> str:
+    """Batch prompt: request storyboard plans for multiple scenes in one call.
+
+    Model must return strict JSON only:
+    {"scenes": [{"scene_number": int, "vision_storyboard": "<SCENE_VISION_STORYBOARD_PLAN>...</SCENE_VISION_STORYBOARD_PLAN>"}]}
+    """
+    numbers_str = ", ".join(str(n) for n in scene_numbers)
+    plugins_str = ", ".join(relevant_plugins)
+    prompt = f"""
+You are an expert in educational video production and Manim animation.
+Task: Generate vision + storyboard plans for these scenes in one response.
+
+Topic: {topic}
+Description: {description}
+
+Scene Outline (XML):
+{scene_outline}
+
+Relevant Manim plugins: {plugins_str if plugins_str else 'None'}
+
+Scenes to generate: [{numbers_str}]
+
+Requirements:
+- For each listed scene_number, produce a complete storyboard plan.
+- Each storyboard must be wrapped in <SCENE_VISION_STORYBOARD_PLAN>...</SCENE_VISION_STORYBOARD_PLAN>.
+- Return STRICT JSON ONLY with this schema (no prose, no code fences):
+  {{"scenes": [{{"scene_number": int, "vision_storyboard": str}}]}}
+""".strip()
+    return prompt
+
+def get_prompt_scene_technical_implementation_batch(topic: str,
+                                                    description: str,
+                                                    scene_outline: str,
+                                                    storyboards_by_scene: List[dict],
+                                                    relevant_plugins: List[str]) -> str:
+    """Batch prompt: request technical implementation plans for multiple scenes.
+
+    Model must return strict JSON only:
+    {"scenes": [{"scene_number": int, "technical_implementation": "<SCENE_TECHNICAL_IMPLEMENTATION_PLAN>...</SCENE_TECHNICAL_IMPLEMENTATION_PLAN>"}]}
+    """
+    plugins_str = ", ".join(relevant_plugins)
+    storyboards_json = json.dumps(storyboards_by_scene, indent=2)
+    prompt = f"""
+You are an expert in Manim technical planning.
+Task: Generate technical implementation plans for all scenes below.
+
+Topic: {topic}
+Description: {description}
+
+Scene Outline (XML):
+{scene_outline}
+
+Relevant Manim plugins: {plugins_str if plugins_str else 'None'}
+
+Input Storyboards (JSON):
+{storyboards_json}
+
+Requirements:
+- For each scene_number in the input, produce a complete technical implementation plan.
+- Each plan must be wrapped in <SCENE_TECHNICAL_IMPLEMENTATION_PLAN>...</SCENE_TECHNICAL_IMPLEMENTATION_PLAN>.
+- Return STRICT JSON ONLY with this schema (no prose, no code fences):
+  {{"scenes": [{{"scene_number": int, "technical_implementation": str}}]}}
+""".strip()
+    return prompt
+
+def get_prompt_scene_animation_narration_batch(topic: str,
+                                               description: str,
+                                               scene_outline: str,
+                                               storyboards_by_scene: List[dict],
+                                               technicals_by_scene: List[dict],
+                                               relevant_plugins: List[str]) -> str:
+    """Batch prompt: request narration plans for multiple scenes.
+
+    Model must return strict JSON only:
+    {"scenes": [{"scene_number": int, "animation_narration": "<SCENE_ANIMATION_NARRATION_PLAN>...</SCENE_ANIMATION_NARRATION_PLAN>"}]}
+    """
+    plugins_str = ", ".join(relevant_plugins)
+    storyboards_json = json.dumps(storyboards_by_scene, indent=2)
+    technicals_json = json.dumps(technicals_by_scene, indent=2)
+    prompt = f"""
+You are an expert in educational narration and Manim animation pacing.
+Task: Generate animation + narration plans for all scenes below.
+
+Topic: {topic}
+Description: {description}
+
+Scene Outline (XML):
+{scene_outline}
+
+Relevant Manim plugins: {plugins_str if plugins_str else 'None'}
+
+Input Storyboards (JSON):
+{storyboards_json}
+
+Input Technical Implementations (JSON):
+{technicals_json}
+
+Requirements:
+- For each scene_number present in inputs, produce a complete animation-narration plan aligned with the technical plan.
+- Each plan must be wrapped in <SCENE_ANIMATION_NARRATION_PLAN>...</SCENE_ANIMATION_NARRATION_PLAN>.
+- Return STRICT JSON ONLY with this schema (no prose, no code fences):
+  {{"scenes": [{{"scene_number": int, "animation_narration": str}}]}}
+""".strip()
+    return prompt
+
+def get_prompt_scene_technical_and_narration_batch(topic: str,
+                                                    description: str,
+                                                    scene_outline: str,
+                                                    storyboards_by_scene: List[dict],
+                                                    relevant_plugins: List[str]) -> str:
+    """Batch prompt: request BOTH technical implementation and narration for multiple scenes in one call.
+
+    Model must return strict JSON only:
+    {"scenes": [{"scene_number": int, "technical_implementation": "<SCENE_TECHNICAL_IMPLEMENTATION_PLAN>...</SCENE_TECHNICAL_IMPLEMENTATION_PLAN>", "animation_narration": "<SCENE_ANIMATION_NARRATION_PLAN>...</SCENE_ANIMATION_NARRATION_PLAN>"}]}
+    """
+    plugins_str = ", ".join(relevant_plugins)
+    storyboards_json = json.dumps(storyboards_by_scene, indent=2)
+    prompt = f"""
+You are an expert in Manim technical planning and educational narration.
+Task: For each scene, generate both the technical implementation plan and the animation+narration plan in one response.
+
+Topic: {topic}
+Description: {description}
+
+Scene Outline (XML):
+{scene_outline}
+
+Relevant Manim plugins: {plugins_str if plugins_str else 'None'}
+
+Input Storyboards (JSON):
+{storyboards_json}
+
+Requirements:
+- For each scene_number, produce both plans.
+- Wrap technical in <SCENE_TECHNICAL_IMPLEMENTATION_PLAN>...</SCENE_TECHNICAL_IMPLEMENTATION_PLAN>.
+- Wrap narration in <SCENE_ANIMATION_NARRATION_PLAN>...</SCENE_ANIMATION_NARRATION_PLAN>.
+- Return STRICT JSON ONLY with this schema (no prose, no code fences):
+  {{
+    "scenes": [
+      {{"scene_number": int,
+        "technical_implementation": str,
+        "animation_narration": str}}
+    ]
+  }}
+""".strip()
     return prompt
 
 def get_prompt_code_generation(topic: str,
