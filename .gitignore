@@ -89,3 +89,4 @@ __docker_build_cache__/
 /opt/conda/
 
 live_test_outputs
+jobs

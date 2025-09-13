@@ -27,6 +27,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     pkg-config \
     portaudio19-dev \
+    espeak-ng \
     libasound2-dev \
     libsdl-pango-dev \
     libcairo2-dev \
@@ -50,12 +51,14 @@ RUN pip install --no-cache-dir  torch torchvision torchaudio --index-url https:/
 
 # Ensure Hugging Face cache directories are writable
 
+RUN  
+
 # Create models directory and download models efficiently
 RUN mkdir -p models && cd models \
     && echo "Downloading models for HF Spaces..." \
     && wget --progress=dot:giga --timeout=30 --tries=3 \
         -O kokoro-v0_19.onnx \
-        "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files/kokoro-v0_19.onnx" \
+        "https://github.com/taylorchu/kokoro-onnx/releases/download/v0.2.0/kokoro-quant.onnx" \
     && wget --progress=dot:giga --timeout=30 --tries=3 \
         -O voices.bin \
         "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files/voices.bin" \
