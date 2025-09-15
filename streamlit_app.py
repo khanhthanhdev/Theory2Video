@@ -17,7 +17,12 @@ from src.config.config import Config
 from generate_video import EnhancedVideoGenerator, VideoGenerationConfig, allowed_models, default_model
 from src.utils.model_registry import get_providers_config
 
+def local_css(file_name):
+    with open(file_name) as f:
+        st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
 
+# Load the CSS file
+local_css("assets/style.css")
 # ----------------------------
 # Page config and light styling
 # ----------------------------
@@ -424,80 +429,187 @@ with st.sidebar:
 
 
 if page == "Generate":
-    col_left, col_right = st.columns([1, 2], gap="large")
-
-    with col_left:
-        st.markdown("### Create a Video")
-        topic = st.text_input("Topic", placeholder="e.g., Binary Search, Eigenvalues, Fourier Transform", key="topic")
-        description = st.text_area(
-            "Short Description",
-            placeholder="What should the video teach/show? Include audience and examples.",
-            height=180,
-            key="description",
+    # 1. Header Section
+    st.markdown("<div class='hero-section'>", unsafe_allow_html=True)
+    st.markdown("# Transform Theory into Visual Learning")
+    st.markdown("Generate educational math and science videos with AI-powered animations")
+    st.markdown("</div>", unsafe_allow_html=True)
+    
+    # 2. Input Section
+    st.markdown("<div class='input-section'>", unsafe_allow_html=True)
+    st.markdown("### Create Your Video")
+    
+    # Responsive input layout
+    input_col1, input_col2 = st.columns([3, 1], gap="medium")
+    
+    with input_col1:
+        topic = st.text_input(
+            "Video Topic", 
+            placeholder="e.g., Binary Search, Eigenvalues, Fourier Transform",
+            key="topic",
+            label_visibility="collapsed"
         )
-        # Buttons: responsive layout (Generate on its own row, others below)
-        gcol = st.columns([1])
-        if gcol[0].button("▶ Generate", use_container_width=True):
-            jid, info = submit_job(topic, description, model, temperature, quality, api_key)
-            if jid:
-                st.session_state["job_id"] = jid
-            st.session_state["info_msg"] = info
-            _rerun()
-
-        b2, b3, b4 = st.columns([1, 1, 1])
-        if b2.button("Example", use_container_width=True):
-            st.session_state["prefill"] = {
-                "topic": "Binary Search: Visualizing the Algorithm",
-                "description": "Create a concise explainer (60–90s) for high-school CS students covering idea, step-by-step trace, and time complexity.",
-                "model": DEFAULT_MODEL,
-                "temperature": 0.6,
-                "quality": "medium",
-            }
-            st.session_state["prefill_applied"] = False
-            _rerun()
-
-        if b3.button("Clear", use_container_width=True):
-            st.session_state.pop("prefill", None)
-            st.session_state.pop("job_id", None)
-            st.session_state["info_msg"] = "Ready."
-            _rerun()
-
-        if b4.button("Cancel", use_container_width=True):
-            msg = cancel_job(st.session_state.get("job_id"))
-            st.session_state["info_msg"] = msg
-            _rerun()
-
-        st.caption(st.session_state.get("info_msg", ""))
-
-        # Clear prefill marker after render
-        if st.session_state.get("prefill_applied"):
-            st.session_state.pop("prefill", None)
-
-    with col_right:
-        st.markdown("### Progress & Preview")
+        description = st.text_area(
+            "Description",
+            placeholder="What should the video teach? Include target audience and key concepts to cover...",
+            height=120,
+            key="description",
+            label_visibility="collapsed"
+        )
+    
+    with input_col2:
+        # Generate button with loading state
         job_id = st.session_state.get("job_id")
         job, progress, message, status = get_status(job_id)
-
-        if not job_id:
-            st.info("No active job. Generate a video to begin.")
+        
+        if status in ("pending", "initializing", "planning", "implementation_planning", "code_generation", "scene_rendering", "video_combining", "finalizing"):
+            st.button("🔄 Generating...", disabled=True, use_container_width=True)
         else:
-            st.write(message)
-            st.progress(progress / 100 if progress else 0)
+            if st.button("✨ Generate Video", use_container_width=True, type="primary"):
+                jid, info = submit_job(topic, description, model, temperature, quality, api_key)
+                if jid:
+                    st.session_state["job_id"] = jid
+                st.session_state["info_msg"] = info
+                _rerun()
+        
+        # Secondary actions
+        action_cols = st.columns(3)
+        with action_cols[0]:
+            if st.button("📝 Example", use_container_width=True, help="Load example content"):
+                st.session_state["prefill"] = {
+                    "topic": "Binary Search Algorithm",
+                    "description": "Create a visual explanation of binary search for computer science students, showing step-by-step execution and time complexity analysis.",
+                    "model": DEFAULT_MODEL,
+                    "temperature": 0.6,
+                    "quality": "medium",
+                }
+                st.session_state["prefill_applied"] = False
+                _rerun()
+        
+        with action_cols[1]:
+            if st.button("🗑️ Clear", use_container_width=True, help="Clear all inputs"):
+                st.session_state.pop("prefill", None)
+                st.session_state.pop("job_id", None)
+                st.session_state["info_msg"] = "Ready to create your video."
+                _rerun()
+        
+        with action_cols[2]:
+            if st.button("⏹️ Stop", use_container_width=True, help="Cancel current generation"):
+                msg = cancel_job(st.session_state.get("job_id"))
+                st.session_state["info_msg"] = msg
+                _rerun()
+    
+    st.markdown("</div>", unsafe_allow_html=True)
 
-            auto = st.checkbox("Auto-refresh (3s)", value=True if status not in ("completed", "failed", "cancelled") else False)
-            st.text(f"Job ID: {job_id}")
-
-            if job and job.get("status") == "completed" and job.get("output_file") and os.path.exists(job["output_file"]):
+    # 3. Status/Result Area
+    st.markdown("<div class='status-section'>", unsafe_allow_html=True)
+    
+    if job_id:
+        if status == "completed" and job and job.get("output_file") and os.path.exists(job["output_file"]):
+            # Success state - prominent video display
+            st.success("🎉 Video generation completed successfully!")
+            
+            # Video player with download
+            video_col1, video_col2 = st.columns([4, 1])
+            with video_col1:
                 st.video(job["output_file"])
+            with video_col2:
+                st.markdown("### Download")
                 try:
                     with open(job["output_file"], "rb") as f:
-                        st.download_button("Download Video", f, file_name=os.path.basename(job["output_file"]))
+                        st.download_button(
+                            "⬇️ Download MP4",
+                            f,
+                            file_name=os.path.basename(job["output_file"]),
+                            mime="video/mp4",
+                            use_container_width=True
+                        )
                 except Exception:
-                    pass
-
-            if auto and status not in ("completed", "failed", "cancelled"):
-                time.sleep(3)
+                    st.error("Download unavailable")
+                
+                st.markdown("---")
+                st.markdown("**Generation Details:**")
+                st.text(f"Job ID: {job_id[:8]}...")
+                if job.get("start_time"):
+                    try:
+                        start_dt = datetime.fromisoformat(job["start_time"])
+                        st.text(f"Created: {start_dt.strftime('%H:%M:%S')}")
+                    except:
+                        pass
+        
+        elif status in ("pending", "initializing", "planning", "implementation_planning", "code_generation", "scene_rendering", "video_combining", "finalizing"):
+            # Loading state
+            st.info(f"🔄 {message}")
+            progress_bar = st.progress(progress / 100 if progress else 0)
+            
+            # Auto-refresh during generation
+            auto_refresh_placeholder = st.empty()
+            with auto_refresh_placeholder:
+                if st.checkbox("🔄 Auto-refresh", value=True, help="Automatically update progress"):
+                    time.sleep(3)
+                    _rerun()
+        
+        elif status == "failed":
+            # Error state
+            st.error(f"❌ Generation failed: {message}")
+            if st.button("🔄 Try Again", use_container_width=True):
+                st.session_state.pop("job_id", None)
                 _rerun()
+        
+        elif status == "cancelled":
+            # Cancelled state  
+            st.warning("⏹️ Generation was cancelled")
+    
+    else:
+        # Initial state
+        info_msg = st.session_state.get("info_msg", "")
+        if info_msg and info_msg != "Ready to create your video.":
+            if "error" in info_msg.lower() or "failed" in info_msg.lower():
+                st.error(info_msg)
+            elif "success" in info_msg.lower() or "submitted" in info_msg.lower():
+                st.success(info_msg)
+            else:
+                st.info(info_msg)
+    
+    # Clear prefill marker after render
+    if st.session_state.get("prefill_applied"):
+        st.session_state.pop("prefill", None)
+    
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    # 4. Demo Section
+    st.markdown("<div class='demo-section'>", unsafe_allow_html=True)
+    st.markdown("## Demo Videos")
+    st.markdown("Explore examples of AI-generated educational content")
+    
+    # Demo videos grid (3x2)
+    demo_videos = [
+        {"file": "demo_1.mp4", "title": "Binary Search Algorithm", "description": "Step-by-step visualization of binary search"},
+        {"file": "demo_2.mp4", "title": "Fourier Transform", "description": "Understanding frequency domain transformations"},
+        {"file": "demo_3.mp4", "title": "Neural Networks", "description": "How artificial neurons learn patterns"},
+        {"file": "demo_4.mp4", "title": "Calculus Derivatives", "description": "Geometric interpretation of derivatives"},
+        {"file": "demo_5.mp4", "title": "Quantum States", "description": "Visualization of quantum superposition"},
+        {"file": "demo_6.mp4", "title": "Graph Algorithms", "description": "Pathfinding and graph traversal methods"}
+    ]
+    
+    # Create responsive grid
+    for i in range(0, len(demo_videos), 3):
+        cols = st.columns(3, gap="medium")
+        for j, col in enumerate(cols):
+            if i + j < len(demo_videos):
+                demo = demo_videos[i + j]
+                video_path = f"public/{demo['file']}"
+                
+                with col:
+                    if os.path.exists(video_path):
+                        with st.container():
+                            st.markdown(f"**{demo['title']}**")
+                            st.video(video_path)
+                            st.caption(demo['description'])
+                    else:
+                        st.info(f"Demo video {demo['file']} not found")
+    
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 def list_jobs_sorted() -> Dict[str, Dict[str, Any]]:
