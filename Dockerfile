@@ -57,7 +57,7 @@ RUN
 RUN mkdir -p models && cd models \
     && echo "Downloading models for HF Spaces..." \
     && wget --progress=dot:giga --timeout=30 --tries=3 \
-        -O kokoro-v0_19.onnx \
+        -O kokoro-quant.onnx \
         "https://github.com/taylorchu/kokoro-onnx/releases/download/v0.2.0/kokoro-quant.onnx" \
     && wget --progress=dot:giga --timeout=30 --tries=3 \
         -O voices.bin \

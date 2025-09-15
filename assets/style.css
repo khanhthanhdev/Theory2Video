@@ -1,0 +1,194 @@
+/* Modern AI App UI — Claude/ChatGPT style */
+:root {
+  --bg: #f7f7f8;
+  --card: #ffffff;
+  --text: #1a202c;
+  --text-2: #4a5568;
+  --text-3: #9ca3af;
+  --accent: #667eea;
+  --accent-2: #5563dd;
+  --border: #e5e7eb;
+  --shadow: 0 10px 30px rgba(17, 24, 39, 0.08);
+  --radius-lg: 24px;
+  --radius-md: 16px;
+  --radius-sm: 12px;
+  --transition: 0.3s ease;
+}
+
+html, body { height: 100%; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  margin: 0 !important;
+  padding: 0 !important;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen,
+    Ubuntu, Cantarell, 'Helvetica Neue', Arial, 'Apple Color Emoji',
+    'Segoe UI Emoji', 'Segoe UI Symbol', sans-serif;
+  line-height: 1.6;
+}
+
+/* Hide default Streamlit chrome and collapse header space */
+#MainMenu, footer { display: none !important; }
+header[data-testid="stHeader"] {
+  display: none !important;
+  height: 0 !important;
+  min-height: 0 !important;
+  padding: 0 !important;
+  margin: 0 !important;
+}
+[data-testid="stToolbar"] { display: none !important; }
+/* Reduce default page padding for above‑the‑fold content */
+[data-testid="stAppViewContainer"] { padding-top: 0 !important; }
+[data-testid="stAppViewContainer"] > .main { padding-top: 0 !important; }
+[data-testid="stAppViewContainer"] > .main .block-container { padding-top: 4px !important; padding-bottom: 16px !important; }
+.stApp { padding-top: 0 !important; }
+.block-container { padding-top: 8px !important; }
+
+/* Glassmorphism header */
+.glass-header {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  backdrop-filter: saturate(160%) blur(12px);
+  -webkit-backdrop-filter: saturate(160%) blur(12px);
+  background: rgba(255, 255, 255, 0.6);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+}
+.glass-header.dark {
+  background: rgba(17, 24, 39, 0.4);
+  border-bottom-color: rgba(255, 255, 255, 0.08);
+}
+.header-inner { max-width: 1100px; margin: 0 auto; height: 56px; display: grid; place-items: center; }
+.app-title { font-size: 20px; font-weight: 600; color: var(--text); letter-spacing: -0.01em; }
+
+/* Page layout */
+.page { max-width: 1100px; margin: 0 auto; padding: 6px 16px 20px; display: flex; flex-direction: column; }
+.hero { display: flex; align-items: center; margin: 4px 0 8px; }
+.hero.center { justify-content: center; }
+.welcome { text-align: center; margin-bottom: 12px; }
+.welcome h1 { font-size: 24px; font-weight: 600; margin: 0; letter-spacing: -0.02em; }
+.welcome p { color: var(--text-2); margin: 4px 0 0; }
+
+/* Input hero */
+.input-hero {
+  position: relative;
+  width: 100%;
+  max-width: 700px;
+  margin: 0 auto;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+  padding: 10px 12px 56px; /* room for floating submit, tighter spacing */
+  transition: box-shadow var(--transition), transform var(--transition), border-color var(--transition);
+}
+.input-hero:hover { transform: translateY(-1px); box-shadow: 0 12px 32px rgba(17,24,39,0.10); }
+.input-hero:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(102,126,234,0.15), var(--shadow); }
+
+/* Normalize Streamlit inputs in the hero */
+.input-hero [data-testid="stTextInput"] input,
+.input-hero [data-testid="stTextArea"] textarea {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  outline: none !important;
+  color: var(--text) !important;
+  font-size: 16px !important;
+}
+.input-hero [data-testid="stTextArea"] textarea { min-height: 120px !important; resize: vertical !important; }
+
+/* Floating circular submit button */
+.input-hero .stButton > button {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  height: 46px;
+  width: 46px;
+  padding: 0;
+  border-radius: 999px;
+  background: var(--accent) !important;
+  color: #fff !important;
+  border: 1px solid transparent !important;
+  box-shadow: 0 8px 20px rgba(102,126,234,0.35);
+  transition: transform var(--transition), box-shadow var(--transition), background var(--transition);
+}
+.input-hero .stButton > button:hover { transform: translateY(-1px); box-shadow: 0 12px 22px rgba(102,126,234,0.38); }
+.input-hero .stButton > button:focus { box-shadow: 0 0 0 4px rgba(102,126,234,0.25); }
+
+/* Results and cards */
+.results { max-width: 800px; margin: 12px auto 0; width: 100%; }
+.result-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow);
+  padding: 16px;
+  animation: fadeUp 320ms ease both;
+}
+.card-title { font-weight: 600; margin: 0 0 8px; color: var(--text); }
+.muted { color: var(--text-2); }
+
+/* Demo grid */
+.demo { margin-top: 16px; }
+.demo h2 { font-size: 20px; font-weight: 600; margin: 0 0 8px; }
+.demo p { color: var(--text-2); margin: 0 0 12px; }
+.demo-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+.demo-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow);
+  padding: 12px;
+  transition: transform var(--transition), box-shadow var(--transition);
+}
+.demo-card:hover { transform: translateY(-1px); box-shadow: 0 14px 34px rgba(17,24,39,0.12); }
+.demo-card .title { font-weight: 600; margin-bottom: 6px; }
+.demo-card .desc { color: var(--text-2); font-size: 14px; }
+
+/* Loading dots */
+.loading { display: inline-flex; gap: 6px; align-items: center; }
+.dot { width: 6px; height: 6px; border-radius: 999px; background: var(--accent); opacity: 0.85; animation: bounce 1.2s infinite ease-in-out; }
+.dot:nth-child(2) { animation-delay: 0.2s; }
+.dot:nth-child(3) { animation-delay: 0.4s; }
+
+/* Animations */
+@keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes bounce { 0%, 80%, 100% { transform: scale(0.9); opacity: 0.7; } 40% { transform: scale(1); opacity: 1; } }
+
+/* Responsive breakpoints */
+@media (max-width: 1024px) { .demo-grid { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 768px) {
+  .header-inner { height: 52px; }
+  .welcome h1 { font-size: 22px; }
+  .demo-grid { grid-template-columns: 1fr; }
+  .input-hero { padding-bottom: 66px; }
+}
+
+/* Compact sections for current Streamlit markup */
+.hero-section { margin: 6px 0 !important; }
+.input-section { margin: 6px 0 !important; }
+.status-section { margin: 8px 0 !important; }
+.demo-section { margin-top: 12px !important; }
+.input-section .stButton > button { width: 100% !important; }
+
+/* Minimize vertical gaps across blocks, headings, and markdown */
+[data-testid="stMarkdownContainer"] h1,
+[data-testid="stMarkdownContainer"] h2,
+[data-testid="stMarkdownContainer"] h3,
+[data-testid="stMarkdownContainer"] h4,
+[data-testid="stMarkdownContainer"] p,
+.stMarkdown { margin: 2px 0 !important; padding: 0 !important; }
+
+/* Compress default vertical spacing between Streamlit blocks */
+.block-container > div { margin-top: 6px !important; margin-bottom: 6px !important; padding-top: 0 !important; padding-bottom: 0 !important; }
+[data-testid="stVerticalBlock"] { gap: 6px !important; }
+[data-testid="stHorizontalBlock"] { margin-top: 4px !important; margin-bottom: 4px !important; }
+[data-testid="column"] > div { margin-top: 6px !important; margin-bottom: 6px !important; }
+
+/* Remove extra gap between custom header and content */
+.app-header { margin: 0 !important; padding: 0 !important; }
+.app-header .app-shell { padding-top: 4px !important; padding-bottom: 4px !important; }
+.app-shell { padding-top: 4px !important; padding-bottom: 4px !important; }
+
+/* Tighten spacing for captions */
+div[data-testid="stCaptionContainer"] { margin: 2px 0 !important; }
