@@ -481,13 +481,16 @@ if page == "Generate":
                 msg = cancel_job(job_id)
                 st.session_state["info_msg"] = msg
                 _rerun()
+            st.caption("Your current video will pause immediately.")
         else:
-            if st.button("✨ Generate Video", use_container_width=True, key="generate_btn"):
+            if st.button("✨ Generate Video", type="primary", use_container_width=True, key="generate_btn"):
                 jid, info = submit_job(topic, description, model, temperature, quality, api_key)
                 if jid:
                     st.session_state["job_id"] = jid
                 st.session_state["info_msg"] = info
                 _rerun()
+            st.caption("Typical runs finish in a few minutes. You can tweak copy and re-run anytime.")
+            st.markdown("</div>", unsafe_allow_html=True)
 
         # Example under Generate
         if st.button("📝 Example", use_container_width=True, help="Load example content", key="example_btn"):

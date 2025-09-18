@@ -1,7 +1,7 @@
 import os
 import re
 import json
-from typing import List, Dict
+from typing import List, Dict, Optional
 
 from mllm_tools.utils import _prepare_text_inputs
 from task_generator import (
@@ -13,6 +13,7 @@ from task_generator import (
     get_prompt_rag_query_generation_code
 )
 from src.rag.vector_store import EnhancedRAGVectorStore as RAGVectorStore
+from src.rag.context7_client import Context7Client
 
 class RAGIntegration:
     """Class for integrating RAG (Retrieval Augmented Generation) functionality.
@@ -30,12 +31,32 @@ class RAGIntegration:
         session_id (str, optional): Session identifier. Defaults to None
     """
 
-    def __init__(self, helper_model, output_dir, chroma_db_path, manim_docs_path, embedding_model, use_langfuse=True, session_id=None):
+    def __init__(
+        self,
+        helper_model,
+        output_dir,
+        chroma_db_path,
+        manim_docs_path,
+        embedding_model,
+        use_langfuse: bool = True,
+        session_id=None,
+        context7_library: Optional[str] = None,
+        context7_tokens: int = 2000,
+        context7_max_queries: int = 3,
+        context7_snippets_per_query: int = 2,
+    ):
         self.helper_model = helper_model
         self.output_dir = output_dir
         self.manim_docs_path = manim_docs_path
         self.session_id = session_id
         self.relevant_plugins = None
+
+        self.context7_client = Context7Client(
+            library=context7_library,
+            default_tokens=context7_tokens,
+            max_queries=context7_max_queries,
+            snippets_per_query=context7_snippets_per_query,
+        )
 
         self.vector_store = RAGVectorStore(
             chroma_db_path=chroma_db_path,
@@ -278,24 +299,65 @@ class RAGIntegration:
 
         return queries
 
-    def get_relevant_docs(self, rag_queries: List[Dict], scene_trace_id: str, topic: str, scene_number: int) -> List[str]:
-        """Get relevant documentation using the vector store.
+    def get_relevant_docs(self, rag_queries: List[Dict], scene_trace_id: str, topic: str, scene_number: int) -> str:
+        """Get relevant documentation using Context7, falling back to the vector store if needed."""
 
-        Args:
-            rag_queries (List[Dict]): List of RAG queries to search for
-            scene_trace_id (str): Trace identifier for the scene
-            topic (str): Topic name
-            scene_number (int): Scene number
+        safe_topic = topic or "untitled"
+        cache_dir = os.path.join(
+            self.output_dir,
+            re.sub(r'[^a-z0-9_]+', '_', safe_topic.lower()),
+            f"scene{scene_number}",
+            "rag_cache",
+        )
+        os.makedirs(cache_dir, exist_ok=True)
+        cache_file = os.path.join(cache_dir, "context7_docs.json")
 
-        Returns:
-            List[str]: List of relevant documentation snippets
-        """
+        if os.path.exists(cache_file):
+            try:
+                with open(cache_file, "r", encoding="utf-8") as handle:
+                    cached = json.load(handle)
+                return self.context7_client.format_snippets_markdown(cached)
+            except Exception:
+                pass
+
+        aggregated_results = []
+
+        if self.context7_client.available:
+            for query in rag_queries or []:
+                if len(aggregated_results) >= self.context7_client.max_queries:
+                    break
+                if not isinstance(query, dict):
+                    continue
+                query_text = (query.get("query") or "").strip()
+                if not query_text:
+                    continue
+
+                snippets = self.context7_client.fetch_snippets(query_text)
+                if snippets:
+                    aggregated_results.append({
+                        "query": query_text,
+                        "snippets": snippets,
+                    })
+
+        if aggregated_results:
+            try:
+                with open(cache_file, "w", encoding="utf-8") as handle:
+                    json.dump(aggregated_results, handle, indent=2)
+            except Exception:
+                pass
+            return self.context7_client.format_snippets_markdown(aggregated_results)
+
+        if not self.context7_client.available:
+            print("Context7 API key not configured; falling back to local vector store.")
+        else:
+            print("Context7 returned no snippets; falling back to local vector store.")
+
         return self.vector_store.find_relevant_docs(
             queries=rag_queries,
             k=2,
             trace_id=scene_trace_id,
             topic=topic,
-            scene_number=scene_number
+            scene_number=scene_number,
         )
     
     def _generate_rag_queries_code(self, implementation_plan: str, scene_trace_id: str = None, topic: str = None, scene_number: int = None, relevant_plugins: List[str] = None) -> List[str]:
