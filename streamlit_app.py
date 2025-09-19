@@ -17,6 +17,7 @@ from src.config.config import Config
 from generate_video import EnhancedVideoGenerator, VideoGenerationConfig, allowed_models, default_model
 from src.utils.model_registry import get_providers_config
 
+
 # Page config must be first Streamlit call
 st.set_page_config(page_title="Theory2Video • Demo", layout="wide")
 
@@ -112,6 +113,7 @@ def build_theme_css(mode: str = "System") -> str:
 # Job storage helpers (shared file)
 # ----------------------------
 JOB_STORE_PATH = "jobs/job_history.json"
+JOBS_LOCK = threading.Lock()
 
 
 def load_jobs() -> Dict[str, Dict[str, Any]]:
@@ -133,7 +135,46 @@ def save_jobs(data: Dict[str, Dict[str, Any]]):
     os.replace(tmp, JOB_STORE_PATH)
 
 
-jobs: Dict[str, Dict[str, Any]] = load_jobs()
+def _persist_job(job_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    with JOBS_LOCK:
+        data = load_jobs()
+        data[job_id] = payload
+        save_jobs(data)
+        return payload
+
+
+def _mutate_job(job_id: str, mutator) -> Optional[Dict[str, Any]]:
+    with JOBS_LOCK:
+        data = load_jobs()
+        job = data.get(job_id)
+        if not job:
+            return None
+        mutator(job)
+        save_jobs(data)
+        return job
+
+
+CANCEL_EVENTS: Dict[str, threading.Event] = {}
+CANCEL_EVENTS_LOCK = threading.Lock()
+
+
+def _register_cancel_event(job_id: str) -> threading.Event:
+    with CANCEL_EVENTS_LOCK:
+        event = threading.Event()
+        CANCEL_EVENTS[job_id] = event
+        return event
+
+
+def _get_cancel_event(job_id: str) -> Optional[threading.Event]:
+    with CANCEL_EVENTS_LOCK:
+        return CANCEL_EVENTS.get(job_id)
+
+
+def _clear_cancel_event(job_id: str):
+    with CANCEL_EVENTS_LOCK:
+        CANCEL_EVENTS.pop(job_id, None)
+
+
 PROVIDERS_CFG = get_providers_config()
 
 
@@ -200,32 +241,35 @@ def _provider_env_var(model_name: str) -> Optional[str]:
 
 
 async def _run_pipeline(job_id: str, topic: str, description: str, model: str, temperature: float, quality: str, api_key: Optional[str]):
-    global jobs
+    cancel_event = _get_cancel_event(job_id)
+
+    def _update(updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        return _mutate_job(job_id, lambda job: job.update(updates))
+
     try:
-        job = jobs[job_id]
-        job.update({
+        if _update({
             "status": "initializing",
             "stage": "initializing",
             "progress": 5,
             "message": "Initializing video generator...",
             "start_time": datetime.now().isoformat(),
-        })
-        save_jobs(jobs)
+        }) is None:
+            return
 
         try:
-            # Apply API key to environment for the selected provider if provided
             env_var = _provider_env_var(model)
             if api_key and env_var:
                 os.environ[env_var] = api_key
             vg = init_video_generator(model, temperature, quality)
-            job.update({"message": "Video generator ready", "progress": 10})
-            save_jobs(jobs)
+            _update({"message": "Video generator ready", "progress": 10})
         except Exception as e:
-            job.update({"status": "failed", "message": f"Initialization error: {e}"})
-            save_jobs(jobs)
+            _update({"status": "failed", "message": f"Initialization error: {e}"})
             return
 
         def on_progress(stage: str, sub_progress: int = 0, msg: Optional[str] = None):
+            if cancel_event and cancel_event.is_set():
+                return
+
             base_map = {
                 "planning": 20,
                 "implementation_planning": 30,
@@ -234,47 +278,85 @@ async def _run_pipeline(job_id: str, topic: str, description: str, model: str, t
                 "video_combining": 90,
                 "finalizing": 95,
             }
-            base = base_map.get(stage, job.get("progress", 10))
-            total = int(min(99, base + (sub_progress or 0) // 2))
-            job.update({
-                "status": stage,
-                "stage": stage,
-                "progress": total,
-                "message": msg or stage.replace("_", " ").title(),
-                "last_updated": datetime.now().isoformat(),
-            })
-            save_jobs(jobs)
+
+            def _apply(job: Dict[str, Any]):
+                base = base_map.get(stage, job.get("progress", 10))
+                total = int(min(99, base + (sub_progress or 0) // 2))
+                job.update({
+                    "status": stage,
+                    "stage": stage,
+                    "progress": total,
+                    "message": msg or stage.replace("_", " ").title(),
+                    "last_updated": datetime.now().isoformat(),
+                })
+
+            _mutate_job(job_id, _apply)
 
         if hasattr(vg, "set_progress_callback"):
             vg.set_progress_callback(on_progress)
 
-        await vg.generate_video_pipeline(
-            topic=topic,
-            description=description,
-            only_plan=False,
-            specific_scenes=None,
+        pipeline_task = asyncio.create_task(
+            vg.generate_video_pipeline(
+                topic=topic,
+                description=description,
+                only_plan=False,
+                specific_scenes=None,
+            )
         )
+        pipeline_result: Optional[Dict[str, Any]] = None
 
-        job.update({"status": "finalizing", "stage": "finalizing", "progress": 95, "message": "Finalizing output..."})
-        save_jobs(jobs)
+        while True:
+            if cancel_event and cancel_event.is_set():
+                pipeline_task.cancel()
+                try:
+                    await pipeline_task
+                except asyncio.CancelledError:
+                    raise
 
-        output_file = _find_output_file(topic, Config.OUTPUT_DIR)
-        if not output_file:
-            job.update({"status": "failed", "message": "No video output was generated"})
-            save_jobs(jobs)
+            if pipeline_task.done():
+                pipeline_result = await pipeline_task
+                break
+
+            await asyncio.sleep(0.5)
+
+        if cancel_event and cancel_event.is_set():
+            raise asyncio.CancelledError
+
+        if _update({
+            "status": "finalizing",
+            "stage": "finalizing",
+            "progress": 95,
+            "message": "Finalizing output...",
+        }) is None:
             return
 
-        # Create thumbnail (optional)
+        output_file = None
+        if pipeline_result and isinstance(pipeline_result, dict):
+            output_file = pipeline_result.get("output_file")
+        if not output_file:
+            output_file = _find_output_file(topic, Config.OUTPUT_DIR)
+        if not output_file:
+            _update({"status": "failed", "message": "No video output was generated"})
+            return
+
+        if cancel_event and cancel_event.is_set():
+            raise asyncio.CancelledError
+
         thumb = os.path.join("thumbnails", f"{job_id}.jpg")
         try:
             import subprocess
-            res = subprocess.run(["ffmpeg", "-i", output_file, "-ss", "00:00:03", "-frames:v", "1", thumb], capture_output=True, text=True)
+
+            res = subprocess.run(
+                ["ffmpeg", "-i", output_file, "-ss", "00:00:03", "-frames:v", "1", thumb],
+                capture_output=True,
+                text=True,
+            )
             if res.returncode != 0:
                 thumb = None
         except Exception:
             thumb = None
 
-        job.update({
+        _update({
             "status": "completed",
             "stage": "completed",
             "progress": 100,
@@ -283,17 +365,24 @@ async def _run_pipeline(job_id: str, topic: str, description: str, model: str, t
             "thumbnail": thumb,
             "end_time": datetime.now().isoformat(),
         })
-        save_jobs(jobs)
 
+    except asyncio.CancelledError:
+        _update({
+            "status": "cancelled",
+            "stage": "cancelled",
+            "message": "Job cancelled by user",
+            "last_updated": datetime.now().isoformat(),
+        })
     except Exception as e:
-        jobs[job_id].update({
+        print("Pipeline error:", e)
+        print(traceback.format_exc())
+        _update({
             "status": "failed",
             "message": f"Unexpected error: {e}",
             "last_updated": datetime.now().isoformat(),
         })
-        save_jobs(jobs)
-        print("Pipeline error:", e)
-        print(traceback.format_exc())
+    finally:
+        _clear_cancel_event(job_id)
 
 
 def _start_async(job_id: str, topic: str, description: str, model: str, temperature: float, quality: str, api_key: Optional[str]):
@@ -311,7 +400,7 @@ def submit_job(topic: str, description: str, model: str, temperature: float, qua
         return None, f"Invalid model. Choose from: {allowed_models}"
 
     jid = str(uuid.uuid4())
-    jobs[jid] = {
+    job_payload = {
         "id": jid,
         "topic": topic.strip(),
         "description": description.strip(),
@@ -323,7 +412,8 @@ def submit_job(topic: str, description: str, model: str, temperature: float, qua
         # Do not persist raw API keys to disk; only store model params
         "params": {"model": model, "temperature": float(temperature), "quality": quality, "has_api_key": bool(api_key)},
     }
-    save_jobs(jobs)
+    _persist_job(jid, job_payload)
+    _register_cancel_event(jid)
     _start_async(jid, topic.strip(), description.strip(), model, float(temperature), quality, api_key)
     return jid, "Job submitted!"
 
@@ -342,13 +432,20 @@ def get_status(job_id: Optional[str]):
 def cancel_job(job_id: str):
     if not job_id:
         return "No active job."
-    data = load_jobs()
-    if job_id in data:
-        data[job_id]["status"] = "cancelled"
-        data[job_id]["message"] = "Job cancelled by user"
-        save_jobs(data)
-        return "Job cancelled."
-    return "Job not found."
+    event = _get_cancel_event(job_id)
+    if event:
+        event.set()
+
+    updated = _mutate_job(job_id, lambda job: job.update({
+        "status": "cancelled",
+        "stage": "cancelled",
+        "message": "Job cancelled by user",
+        "last_updated": datetime.now().isoformat(),
+    }))
+
+    if updated is None:
+        return "Job not found."
+    return "Job cancelled."
 
 
 # ----------------------------

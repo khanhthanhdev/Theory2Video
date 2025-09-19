@@ -31,7 +31,7 @@ def get_allowed_models() -> List[str]:
 def get_default_model() -> str:
     data = _load_registry()
     models = get_allowed_models()
-    return data.get("default_model") or (models[0] if models else "openai/gpt-4o")
+    return data.get("default_model") or (models[0] if models else "gemini/gemini-2.5-pro")
 
 
 def get_providers_config() -> Dict[str, Dict]:

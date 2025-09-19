@@ -2,7 +2,7 @@ import os
 import asyncio
 import uuid
 import json
-from typing import Union, List, Dict, Optional, Protocol
+from typing import Union, List, Dict, Optional, Protocol, Any, Tuple
 from dataclasses import dataclass
 from abc import ABC, abstractmethod
 import argparse
@@ -533,41 +533,66 @@ class EnhancedVideoGenerator:
 
     async def generate_video_pipeline(self, topic: str, description: str,
                                     only_plan: bool = False,
-                                    specific_scenes: List[int] = None) -> None:
-        """Complete video generation pipeline with enhanced performance."""
-        
+                                    specific_scenes: List[int] = None) -> Dict[str, Any]:
+        """Complete video generation pipeline with enhanced performance.
+
+        Returns a dictionary summarizing artifacts that were produced. When
+        `only_plan` is True the dictionary contains the scene outline and any
+        implementation plans that were generated, allowing callers to surface
+        the plan content without inspecting the filesystem.
+        """
+
         print(f"🎬 Starting enhanced video pipeline for: {topic}")
         self.session_manager.save_topic_session_id(topic, self.session_id)
-        
+
         file_prefix = re.sub(r'[^a-z0-9_]+', '_', topic.lower())
-        
+
         # Step 1: Load or generate scene outline
-        scene_outline = await self._load_or_generate_outline(topic, description, file_prefix)
-        
+        scene_outline, scene_outline_path = await self._load_or_generate_outline(
+            topic, description, file_prefix
+        )
+
         # Normalize scenes filter early to avoid type issues
         normalized_scenes = self._normalize_specific_scenes(specific_scenes)
+
+        pipeline_result: Dict[str, Any] = {
+            "topic": topic,
+            "scene_outline": scene_outline,
+            "scene_outline_path": scene_outline_path,
+        }
 
         # Step 2: Generate implementation plans
         implementation_plans = await self._generate_implementation_plans(
             topic, description, scene_outline, file_prefix, normalized_scenes
         )
-        
+
+        pipeline_result["implementation_plans"] = implementation_plans
+
         if only_plan:
             print(f"📋 Plan-only mode completed for: {topic}")
-            return
-        
+            pipeline_result["status"] = "plan_generated"
+            return pipeline_result
+
         # Step 3: Render scenes with optimization
         await self._render_scenes_optimized(
             topic, description, scene_outline, implementation_plans, file_prefix
         )
         
         # Step 4: Combine videos
-        await self._combine_videos_optimized(topic)
-        
-        print(f"✅ Enhanced video pipeline completed for: {topic}")
+        output_file = await self._combine_videos_optimized(topic)
+        if output_file:
+            pipeline_result["output_file"] = output_file
+            print(f"✅ Enhanced video pipeline completed for: {topic}")
+        else:
+            print(f"⚠️ Enhanced video pipeline finished but no combined video was produced for: {topic}")
 
-    async def _load_or_generate_outline(self, topic: str, description: str, file_prefix: str) -> str:
-        """Load existing outline or generate new one."""
+        return pipeline_result
+
+    async def _load_or_generate_outline(self, topic: str, description: str, file_prefix: str) -> Tuple[str, str]:
+        """Load existing outline or generate new one.
+
+        Returns the outline content and the path where it is stored.
+        """
         scene_outline_path = os.path.join(self.config.output_dir, file_prefix, f"{file_prefix}_scene_outline.txt")
         
         if os.path.exists(scene_outline_path):
@@ -585,7 +610,7 @@ class EnhancedVideoGenerator:
                         self.planner.rag_integration.set_relevant_plugins(plugins)
                         print(f"🔌 Detected relevant plugins: {plugins}")
                         
-                return scene_outline
+                return scene_outline, scene_outline_path
             else:
                 print(f"⚠️ Existing scene outline appears corrupted or contains errors. Regenerating...")
                 # Remove the corrupted file
@@ -601,7 +626,7 @@ class EnhancedVideoGenerator:
         with open(scene_outline_path, "w") as f:
             f.write(scene_outline)
         
-        return scene_outline
+        return scene_outline, scene_outline_path
     
     def _is_valid_scene_outline(self, content: str) -> bool:
         """Check if the content is a valid scene outline and not an error message."""
@@ -708,7 +733,7 @@ class EnhancedVideoGenerator:
                 print("✅ All implementation plans already exist.")
                 
             return implementation_plans_dict
-            
+
         except Exception as e:
             print(f"❌ Fatal error in implementation plan generation: {str(e)}")
             raise
@@ -807,25 +832,34 @@ class EnhancedVideoGenerator:
             session_id=self.session_id
         )
 
-    async def _combine_videos_optimized(self, topic: str) -> None:
-        """Combine videos with hardware acceleration."""
+    async def _combine_videos_optimized(self, topic: str) -> Optional[str]:
+        """Combine videos with hardware acceleration.
+
+        Returns the path to the combined video when successful, otherwise None.
+        """
         print(f"🎞️ Combining videos for: {topic}")
-        
+
         try:
             output_path = await self.renderer.combine_videos_optimized(
                 topic, use_hardware_acceleration=self.config.use_gpu_acceleration
             )
             print(f"✅ Combined video saved to: {output_path}")
+            return output_path
         except Exception as e:
             print(f"❌ Error combining videos: {e}")
+            return None
 
     async def process_multiple_topics(self, topics_data: List[Dict], 
                                     only_plan: bool = False,
-                                    specific_scenes: List[int] = None) -> None:
-        """Process multiple topics concurrently."""
-        
+                                    specific_scenes: List[int] = None) -> List[Optional[Dict[str, Any]]]:
+        """Process multiple topics concurrently.
+
+        Returns a list of per-topic pipeline results (or None when a topic
+        fails) in the same order as the input data.
+        """
+
         topic_semaphore = asyncio.Semaphore(self.config.max_topic_concurrency)
-        
+
         async def process_single_topic(topic_data):
             async with topic_semaphore:
                 topic = topic_data['theorem']
@@ -833,16 +867,28 @@ class EnhancedVideoGenerator:
                 print(f"🎯 Processing topic: {topic}")
                 
                 try:
-                    await self.generate_video_pipeline(
+                    result = await self.generate_video_pipeline(
                         topic, description, only_plan=only_plan, 
                         specific_scenes=specific_scenes
                     )
                     print(f"✅ Completed topic: {topic}")
+                    return result
                 except Exception as e:
                     print(f"❌ Error processing {topic}: {e}")
+                    return None
         
         tasks = [process_single_topic(topic_data) for topic_data in topics_data]
-        await asyncio.gather(*tasks, return_exceptions=True)
+        raw_results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        results: List[Optional[Dict[str, Any]]] = []
+        for idx, res in enumerate(raw_results):
+            if isinstance(res, Exception):
+                topic = topics_data[idx]['theorem']
+                print(f"❌ Unexpected error processing {topic}: {res}")
+                results.append(None)
+            else:
+                results.append(res)
+        return results
 
     def get_status_summary(self, topics_data: List[Dict]) -> None:
         """Print comprehensive status summary."""
@@ -1001,6 +1047,37 @@ class VideoGeneratorCLI:
             max_concurrent_renders=args.max_concurrent_renders
         )
 
+    @staticmethod
+    def print_plan_result(result: Optional[Dict[str, Any]]) -> None:
+        """Pretty-print plan-only results."""
+        if not result:
+            return
+
+        topic = result.get("topic", "Unknown Topic")
+        print(f"\n📝 Plan for: {topic}")
+
+        outline_path = result.get("scene_outline_path")
+        if outline_path:
+            print(f"   Scene outline saved to: {outline_path}")
+
+        outline = result.get("scene_outline")
+        if outline:
+            print("\n--- Scene Outline ---")
+            print(outline.strip())
+
+        implementation_plans = result.get("implementation_plans") or {}
+        if implementation_plans:
+            print("\n--- Implementation Plans ---")
+            for scene_num in sorted(implementation_plans.keys()):
+                plan = implementation_plans[scene_num]
+                header = f"Scene {scene_num}"
+                print(f"\n{header}")
+                print("=" * len(header))
+                if plan:
+                    print(plan.strip())
+                else:
+                    print("(No plan generated)")
+
 async def main():
     """Enhanced main function with improved error handling and performance."""
     parser = VideoGeneratorCLI.create_argument_parser()
@@ -1041,22 +1118,29 @@ async def handle_multiple_topics(video_generator: EnhancedVideoGenerator, args):
         for theorem in theorems:
             await video_generator._combine_videos_optimized(theorem['theorem'])
     else:
-        await video_generator.process_multiple_topics(
+        results = await video_generator.process_multiple_topics(
             theorems, 
             only_plan=args.only_plan,
             specific_scenes=args.scenes
         )
+        if args.only_plan:
+            for result in results:
+                VideoGeneratorCLI.print_plan_result(result)
 
 async def handle_single_topic(video_generator: EnhancedVideoGenerator, args):
     """Handle processing of single topic."""
     if args.only_combine:
         await video_generator._combine_videos_optimized(args.topic)
     else:
-        await video_generator.generate_video_pipeline(
+        result = await video_generator.generate_video_pipeline(
             args.topic,
             args.context,
             only_plan=args.only_plan
         )
+        if args.only_plan:
+            VideoGeneratorCLI.print_plan_result(result)
+        elif result and result.get("output_file"):
+            print(f"\n📦 Combined video available at: {result['output_file']}")
 
 if __name__ == "__main__":
     asyncio.run(main())
